@@ -33,7 +33,7 @@ void arm() {
 void disarm() {
     gpio_put(PIN_LED_CHARGE_ON, false);
     armed = false;
-    picoemp_disable_pwm();
+    // picoemp_disable_pwm();  // disabled: external PSU replaces on-board HV generation
 }
 
 uint32_t get_status() {
@@ -191,9 +191,10 @@ int main() {
             sleep_ms(100);
         }
 
-        if(!gpio_get(PIN_IN_CHARGED) && armed) {
-            picoemp_enable_pwm(pulse_power.f);
-        }
+        // disabled: external PSU replaces on-board HV generation
+        // if(!gpio_get(PIN_IN_CHARGED) && armed) {
+        //     picoemp_enable_pwm(pulse_power.f);
+        // }
 
         if(timeout_active && (get_absolute_time() > timeout_time) && armed) {
             disarm();

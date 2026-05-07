@@ -13,61 +13,68 @@ const uint32_t PIN_LED_STATUS = 7;
 const uint32_t PIN_BTN_PULSE = 11;
 const uint32_t PIN_OUT_HVPULSE = 14;
 const uint32_t PIN_IN_CHARGED = 18;
-const uint32_t PIN_OUT_HVPWM = 20;
+// const uint32_t PIN_OUT_HVPWM = 20;  // disabled: external PSU replaces on-board HV generation
 const uint32_t PIN_LED_CHARGE_ON = 27;
 const uint32_t PIN_BTN_ARM = 28;
 
-static bool pwm_enabled = false;
+// External PSU inputs
+const uint32_t PIN_IN_Voltage_PWM     = 2;
+const uint32_t PIN_IN_Current_PWM     = 3;
+const uint32_t PIN_IN_Circuit_Open    = 4;
+const uint32_t PIN_IN_Circuit_Shorted = 5;
+const uint32_t PIN_IN_Circuit_UNKNOWN = 8;
 
-// Code from https://www.i-programmer.info/programming/hardware/14849-the-pico-in-c-basic-pwm.html?start=2
-uint32_t pwm_set_freq_duty(uint slice_num,
-       uint chan, uint32_t f, float d)
-{
-    uint32_t clock = clock_get_hz(clk_sys);
-    uint32_t divider16 = clock / f / 4096 + (clock % (f * 4096) != 0);
-    
-    if (divider16 / 16 == 0)
-        divider16 = 16;
-    
-    uint32_t wrap = clock * 16 / divider16 / f - 1;
-    
-    pwm_set_clkdiv_int_frac(slice_num, divider16/16, divider16 & 0xF);
-    pwm_set_wrap(slice_num, wrap);
-    pwm_set_chan_level(slice_num, chan, (int)((float)wrap * d));
-    
-    return wrap;
-}
+// External PSU outputs
+const uint32_t PIN_OUT_HV_Enable = 19;
+const uint32_t PIN_OUT_HV_Data   = 20;
+const uint32_t PIN_OUT_HV_Clock  = 21;
+const uint32_t PIN_OUT_HV_Strobe = 22;
 
-void picoemp_enable_pwm(float duty_frac) {
-    if(pwm_enabled) {
-        return;
-    }
-
-    // Get PWM slice
-    uint32_t slice = pwm_gpio_to_slice_num(PIN_OUT_HVPWM);
-    gpio_set_function(PIN_OUT_HVPWM, GPIO_FUNC_PWM);
-    
-    // Set up clock divider
-    float target_frequency = 25;
-    float divider = clock_get_hz(clk_sys) / target_frequency;
-    pwm_config config = pwm_get_default_config();
-    pwm_config_set_clkdiv(&config, divider);
-    pwm_config_set_wrap(&config, UINT16_MAX);
-
-    // Init PWM, but don't start it yet
-    pwm_init(slice, &config, false);
-    // pwm_set_chan_level(slice, PWM_CHAN_A, 800); // pretty sure this line is pointless
-    pwm_set_freq_duty(slice, PWM_CHAN_A, 2500, duty_frac);
-    pwm_set_enabled(slice, true);
-    pwm_enabled = true;
-}
-
-void picoemp_disable_pwm() {
-    pwm_enabled = false;
-    gpio_init(PIN_OUT_HVPWM);
-    gpio_set_dir(PIN_OUT_HVPWM, GPIO_OUT);
-    gpio_put(PIN_OUT_HVPWM, false);
-}
+// disabled: external PSU replaces on-board HV generation
+// static bool pwm_enabled = false;
+//
+// // Code from https://www.i-programmer.info/programming/hardware/14849-the-pico-in-c-basic-pwm.html?start=2
+// uint32_t pwm_set_freq_duty(uint slice_num,
+//        uint chan, uint32_t f, float d)
+// {
+//     uint32_t clock = clock_get_hz(clk_sys);
+//     uint32_t divider16 = clock / f / 4096 + (clock % (f * 4096) != 0);
+//
+//     if (divider16 / 16 == 0)
+//         divider16 = 16;
+//
+//     uint32_t wrap = clock * 16 / divider16 / f - 1;
+//
+//     pwm_set_clkdiv_int_frac(slice_num, divider16/16, divider16 & 0xF);
+//     pwm_set_wrap(slice_num, wrap);
+//     pwm_set_chan_level(slice_num, chan, (int)((float)wrap * d));
+//
+//     return wrap;
+// }
+//
+// void picoemp_enable_pwm(float duty_frac) {
+//     if(pwm_enabled) {
+//         return;
+//     }
+//     uint32_t slice = pwm_gpio_to_slice_num(PIN_OUT_HVPWM);
+//     gpio_set_function(PIN_OUT_HVPWM, GPIO_FUNC_PWM);
+//     float target_frequency = 25;
+//     float divider = clock_get_hz(clk_sys) / target_frequency;
+//     pwm_config config = pwm_get_default_config();
+//     pwm_config_set_clkdiv(&config, divider);
+//     pwm_config_set_wrap(&config, UINT16_MAX);
+//     pwm_init(slice, &config, false);
+//     pwm_set_freq_duty(slice, PWM_CHAN_A, 2500, duty_frac);
+//     pwm_set_enabled(slice, true);
+//     pwm_enabled = true;
+// }
+//
+// void picoemp_disable_pwm() {
+//     pwm_enabled = false;
+//     gpio_init(PIN_OUT_HVPWM);
+//     gpio_set_dir(PIN_OUT_HVPWM, GPIO_OUT);
+//     gpio_put(PIN_OUT_HVPWM, false);
+// }
 
 void picoemp_pulse(uint32_t pulse_time) {
     gpio_put(PIN_OUT_HVPULSE, true);
@@ -133,5 +140,36 @@ void picoemp_init() {
     picoemp_configure_pulse_output();
 
     // Configure PWM pin
-    picoemp_disable_pwm();
+    // picoemp_disable_pwm();  // disabled: external PSU replaces on-board HV generation
+
+    // External PSU inputs
+    gpio_init(PIN_IN_Voltage_PWM);
+    gpio_init(PIN_IN_Current_PWM);
+    gpio_init(PIN_IN_Circuit_Open);
+    gpio_init(PIN_IN_Circuit_Shorted);
+    gpio_init(PIN_IN_Circuit_UNKNOWN);
+    gpio_set_dir(PIN_IN_Voltage_PWM,     GPIO_IN);
+    gpio_set_dir(PIN_IN_Current_PWM,     GPIO_IN);
+    gpio_set_dir(PIN_IN_Circuit_Open,    GPIO_IN);
+    gpio_set_dir(PIN_IN_Circuit_Shorted, GPIO_IN);
+    gpio_set_dir(PIN_IN_Circuit_UNKNOWN, GPIO_IN);
+    gpio_set_pulls(PIN_IN_Voltage_PWM,     false, false);
+    gpio_set_pulls(PIN_IN_Current_PWM,     false, false);
+    gpio_set_pulls(PIN_IN_Circuit_Open,    false, false);
+    gpio_set_pulls(PIN_IN_Circuit_Shorted, false, false);
+    gpio_set_pulls(PIN_IN_Circuit_UNKNOWN, false, false);
+
+    // External PSU outputs
+    gpio_init(PIN_OUT_HV_Enable);
+    gpio_init(PIN_OUT_HV_Data);
+    gpio_init(PIN_OUT_HV_Clock);
+    gpio_init(PIN_OUT_HV_Strobe);
+    gpio_set_dir(PIN_OUT_HV_Enable, GPIO_OUT);
+    gpio_set_dir(PIN_OUT_HV_Data,   GPIO_OUT);
+    gpio_set_dir(PIN_OUT_HV_Clock,  GPIO_OUT);
+    gpio_set_dir(PIN_OUT_HV_Strobe, GPIO_OUT);
+    gpio_put(PIN_OUT_HV_Enable, false);
+    gpio_put(PIN_OUT_HV_Data,   false);
+    gpio_put(PIN_OUT_HV_Clock,  false);
+    gpio_put(PIN_OUT_HV_Strobe, false);
 }
