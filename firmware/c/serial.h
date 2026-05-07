@@ -15,6 +15,8 @@
 #define cmd_toggle_gp1 11
 #define cmd_config_pulse_delay_cycles 12
 #define cmd_config_pulse_time_cycles 13
+#define cmd_read_voltage_pwm 14
+#define cmd_read_current_pwm 15
 
 #define return_ok 0
 #define return_failed 1

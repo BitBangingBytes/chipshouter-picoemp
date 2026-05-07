@@ -1,4 +1,5 @@
 #include "picoemp.h"
+#include "psu_monitor.h"
 
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
@@ -172,4 +173,6 @@ void picoemp_init() {
     gpio_put(PIN_OUT_HV_Data,   false);
     gpio_put(PIN_OUT_HV_Clock,  false);
     gpio_put(PIN_OUT_HV_Strobe, false);
+
+    psu_monitor_init();
 }

@@ -268,6 +268,46 @@ bool handle_command(char *command) {
         return true;
     }
 
+    if(strcmp(command, "rv") == 0 || strcmp(command, "read_voltage") == 0) {
+        multicore_fifo_push_blocking(cmd_read_voltage_pwm);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok) {
+            uint32_t period_us = multicore_fifo_pop_blocking();
+            if(period_us == 0) {
+                printf("Voltage PWM: No signal\n");
+            } else {
+                float hz = 1000000.0f / (float)period_us;
+                // TODO: replace with calibrated lookup table once bench measurements are taken
+                // Preliminary linear estimate: ~12.4 Hz/V across 20V-3000V range
+                float volts_est = hz / 12.4f;
+                printf("Voltage PWM: period=%uus  freq=%.2fHz  ~%.1fV (est, uncalibrated)\n",
+                       period_us, hz, volts_est);
+            }
+        } else {
+            printf("Read voltage failed!\n");
+        }
+        return true;
+    }
+
+    if(strcmp(command, "ri") == 0 || strcmp(command, "read_current") == 0) {
+        multicore_fifo_push_blocking(cmd_read_current_pwm);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok) {
+            uint32_t period_us = multicore_fifo_pop_blocking();
+            if(period_us == 0) {
+                printf("Current PWM: No signal\n");
+            } else {
+                float hz = 1000000.0f / (float)period_us;
+                // TODO: replace with calibrated lookup table once bench measurements are taken
+                printf("Current PWM: period=%uus  freq=%.2fHz  [calibration TODO]\n",
+                       period_us, hz);
+            }
+        } else {
+            printf("Read current failed!\n");
+        }
+        return true;
+    }
+
     if(strcmp(command, "r") == 0 || strcmp(command, "reset") == 0) {
         watchdog_enable(1, 1);
         while(1);
@@ -306,6 +346,8 @@ void serial_console() {
             printf("- [t]oggle_gp1\n");
             printf("- [s]tatus\n");
             printf("- [r]eset\n");
+            printf("- [rv] read_voltage: period, Hz, estimated volts\n");
+            printf("- [ri] read_current: period, Hz\n");
         }
         printf("\n");
         

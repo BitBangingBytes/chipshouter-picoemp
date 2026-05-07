@@ -5,6 +5,7 @@
 #include "pico/multicore.h"
 
 #include "picoemp.h"
+#include "psu_monitor.h"
 #include "serial.h"
 
 #include "trigger_basic.pio.h"
@@ -169,6 +170,18 @@ int main() {
                 case cmd_toggle_gp1:
                     gpio_xor_mask(1<<1);
                     multicore_fifo_push_blocking(return_ok);
+                    break;
+                case cmd_read_voltage_pwm:
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking(
+                        psu_monitor_voltage_is_valid() ? psu_monitor_get_voltage_period_us() : 0
+                    );
+                    break;
+                case cmd_read_current_pwm:
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking(
+                        psu_monitor_current_is_valid() ? psu_monitor_get_current_period_us() : 0
+                    );
                     break;
             }
         }

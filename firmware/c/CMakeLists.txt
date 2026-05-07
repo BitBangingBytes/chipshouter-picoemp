@@ -15,6 +15,7 @@ target_sources(picoemp PRIVATE
         main.c
         picoemp.c
         serial.c
+        psu_monitor.c
         )
 
 target_link_libraries(picoemp PRIVATE pico_stdlib hardware_pwm hardware_pio pico_multicore)
