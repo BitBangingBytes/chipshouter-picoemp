@@ -1,0 +1,41 @@
+;
+; Measures the LOW phase (falling edge to rising edge) of a PWM signal.
+;
+; Each loop iteration is exactly 2 system clock cycles (16 ns at 125 MHz).
+; The pushed value is 0xFFFFFFFF - N, where N = number of completed loop
+; iterations during the LOW phase.
+;
+; Conversion (50% duty cycle assumed):
+;   low_phase_cycles  = 2 * N = 2 * (0xFFFFFFFF - pushed)
+;   period_cycles     = 4 * N  (double low phase for full period)
+;   period_ns         = 32 * N  (4 cycles * 8 ns/cycle)
+;   frequency_hz      = 125_000_000 / (4 * N)
+;
+; Uses push noblock so FIFO overflow silently discards the oldest value;
+; the CPU drains the FIFO in the main loop.
+;
+.program freq_measure
+
+.wrap_target
+    wait 1 pin 0        ; sync: wait until pin is HIGH
+    wait 0 pin 0        ; falling edge — start of LOW phase
+    mov x, ~null        ; x = 0xFFFFFFFF (counts down)
+count:
+    jmp pin done        ; 1 cycle: pin went HIGH (rising edge) → done
+    jmp x-- count       ; 1 cycle: decrement x and loop
+done:
+    mov isr, x
+    push noblock        ; push to RX FIFO; discard + clear ISR if full
+.wrap
+
+% c-sdk {
+static inline void freq_measure_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_sm_config c = freq_measure_program_get_default_config(offset);
+    sm_config_set_in_pins(&c, pin);    // base for 'wait pin' instructions
+    sm_config_set_jmp_pin(&c, pin);    // pin for 'jmp pin' instruction
+    pio_gpio_init(pio, pin);           // assign GPIO to this PIO instance
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, false);  // input
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

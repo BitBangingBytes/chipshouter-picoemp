@@ -272,16 +272,16 @@ bool handle_command(char *command) {
         multicore_fifo_push_blocking(cmd_read_voltage_pwm);
         uint32_t result = multicore_fifo_pop_blocking();
         if(result == return_ok) {
-            uint32_t period_us = multicore_fifo_pop_blocking();
-            if(period_us == 0) {
+            uint32_t period_ns = multicore_fifo_pop_blocking();
+            if(period_ns == 0) {
                 printf("Voltage PWM: No signal\n");
             } else {
-                float hz = 1000000.0f / (float)period_us;
+                float hz = 1000000000.0f / (float)period_ns;
                 // TODO: replace with calibrated lookup table once bench measurements are taken
                 // Preliminary linear estimate: ~12.4 Hz/V across 20V-3000V range
                 float volts_est = hz / 12.4f;
-                printf("Voltage PWM: period=%uus  freq=%.2fHz  ~%.1fV (est, uncalibrated)\n",
-                       period_us, hz, volts_est);
+                printf("Voltage PWM: period=%uns  freq=%.2fHz  ~%.1fV (est, uncalibrated)\n",
+                       period_ns, hz, volts_est);
             }
         } else {
             printf("Read voltage failed!\n");
@@ -293,14 +293,14 @@ bool handle_command(char *command) {
         multicore_fifo_push_blocking(cmd_read_current_pwm);
         uint32_t result = multicore_fifo_pop_blocking();
         if(result == return_ok) {
-            uint32_t period_us = multicore_fifo_pop_blocking();
-            if(period_us == 0) {
+            uint32_t period_ns = multicore_fifo_pop_blocking();
+            if(period_ns == 0) {
                 printf("Current PWM: No signal\n");
             } else {
-                float hz = 1000000.0f / (float)period_us;
+                float hz = 1000000000.0f / (float)period_ns;
                 // TODO: replace with calibrated lookup table once bench measurements are taken
-                printf("Current PWM: period=%uus  freq=%.2fHz  [calibration TODO]\n",
-                       period_us, hz);
+                printf("Current PWM: period=%uns  freq=%.2fHz  [calibration TODO]\n",
+                       period_ns, hz);
             }
         } else {
             printf("Read current failed!\n");

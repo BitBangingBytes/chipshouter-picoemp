@@ -100,6 +100,8 @@ int main() {
     pulse_time_cycles = PULSE_TIME_CYCLES_DEFAULT;
 
     while(1) {
+        psu_monitor_update();
+
         gpio_put(PIN_LED_HV, gpio_get(PIN_IN_CHARGED));
 
         // Handle serial commands (if any)
@@ -174,13 +176,13 @@ int main() {
                 case cmd_read_voltage_pwm:
                     multicore_fifo_push_blocking(return_ok);
                     multicore_fifo_push_blocking(
-                        psu_monitor_voltage_is_valid() ? psu_monitor_get_voltage_period_us() : 0
+                        psu_monitor_voltage_is_valid() ? psu_monitor_get_voltage_period_ns() : 0
                     );
                     break;
                 case cmd_read_current_pwm:
                     multicore_fifo_push_blocking(return_ok);
                     multicore_fifo_push_blocking(
-                        psu_monitor_current_is_valid() ? psu_monitor_get_current_period_us() : 0
+                        psu_monitor_current_is_valid() ? psu_monitor_get_current_period_ns() : 0
                     );
                     break;
             }
