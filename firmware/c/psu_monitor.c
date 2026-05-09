@@ -40,7 +40,7 @@ void psu_monitor_init() {
 // period_ns = 32 * N_loops  (4 cycles per loop * 8 ns/cycle, doubled for 50% duty).
 // Computed from accumulated sum to preserve sub-loop precision across averages.
 static uint32_t acc_to_period_ns(uint64_t acc, uint32_t n) {
-    return (uint32_t)((32ULL * acc) / n);
+    return (uint32_t)((24ULL * acc) / n);
 }
 
 void psu_monitor_update() {

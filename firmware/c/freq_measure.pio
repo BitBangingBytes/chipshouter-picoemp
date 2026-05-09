@@ -1,28 +1,40 @@
 ;
-; Measures the LOW phase (falling edge to rising edge) of a PWM signal.
+; Measures the full period (rising edge to rising edge) of a PWM signal.
 ;
-; Each loop iteration is exactly 2 system clock cycles (16 ns at 125 MHz).
-; The pushed value is 0xFFFFFFFF - N, where N = number of completed loop
-; iterations during the LOW phase.
+; Counts through both HIGH and LOW phases using equal 3-cycle loops, so no
+; duty cycle assumption is required. Each loop iteration = 3 system clock
+; cycles (24 ns at 125 MHz).
 ;
-; Conversion (50% duty cycle assumed):
-;   low_phase_cycles  = 2 * N = 2 * (0xFFFFFFFF - pushed)
-;   period_cycles     = 4 * N  (double low phase for full period)
-;   period_ns         = 32 * N  (4 cycles * 8 ns/cycle)
-;   frequency_hz      = 125_000_000 / (4 * N)
+; The pushed value is 0xFFFFFFFF - N, where N = total loop iterations.
 ;
-; Uses push noblock so FIFO overflow silently discards the oldest value;
-; the CPU drains the FIFO in the main loop.
+; Conversion:
+;   period_cycles = 3 * N = 3 * (0xFFFFFFFF - pushed)
+;   period_ns     = 24 * N  (3 cycles * 8 ns/cycle)
+;   frequency_hz  = 1_000_000_000 / period_ns
+;
+; Uses push noblock so FIFO overflow silently discards; CPU drains in main loop.
 ;
 .program freq_measure
 
 .wrap_target
-    wait 1 pin 0        ; sync: wait until pin is HIGH
-    wait 0 pin 0        ; falling edge — start of LOW phase
+    wait 0 pin 0        ; sync: ensure pin is LOW
+    wait 1 pin 0        ; rising edge #1 — start of period
     mov x, ~null        ; x = 0xFFFFFFFF (counts down)
-count:
-    jmp pin done        ; 1 cycle: pin went HIGH (rising edge) → done
-    jmp x-- count       ; 1 cycle: decrement x and loop
+
+high:
+    jmp x-- high_chk    ; 1 cycle
+high_chk:
+    jmp pin high_nop    ; 1 cycle: still HIGH → high_nop (3 cycles/iter)
+    jmp low             ; 1 cycle: pin went LOW → enter low phase
+high_nop:
+    jmp high            ; 1 cycle (pad to equalise with low loop)
+
+low:
+    jmp x-- low_chk     ; 1 cycle
+low_chk:
+    jmp pin done        ; 1 cycle: rising edge #2 → done (3 cycles/iter)
+    jmp low             ; 1 cycle: still LOW → loop
+
 done:
     mov isr, x
     push noblock        ; push to RX FIFO; discard + clear ISR if full
