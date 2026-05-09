@@ -169,7 +169,7 @@ void picoemp_init() {
     gpio_set_dir(PIN_OUT_HV_Data,   GPIO_OUT);
     gpio_set_dir(PIN_OUT_HV_Clock,  GPIO_OUT);
     gpio_set_dir(PIN_OUT_HV_Strobe, GPIO_OUT);
-    gpio_put(PIN_OUT_HV_Enable, false);
+    gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled; must be deasserted before DAC init
     gpio_put(PIN_OUT_HV_Data,   false);
     gpio_put(PIN_OUT_HV_Clock,  false);
     gpio_put(PIN_OUT_HV_Strobe, false);
