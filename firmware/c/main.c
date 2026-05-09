@@ -6,6 +6,8 @@
 
 #include "picoemp.h"
 #include "psu_monitor.h"
+#include "dac.h"
+#include "control_loop.h"
 #include "serial.h"
 
 #include "trigger_basic.pio.h"
@@ -20,11 +22,10 @@ static uint offset = 0xFFFFFFFF;
 #define PULSE_DELAY_CYCLES_DEFAULT 0
 #define PULSE_TIME_CYCLES_DEFAULT 625 // 5us in 8ns cycles
 #define PULSE_TIME_US_DEFAULT 5 // 5us
-#define PULSE_POWER_DEFAULT 0.0122
 static uint32_t pulse_time;
 static uint32_t pulse_delay_cycles;
 static uint32_t pulse_time_cycles;
-static union float_union {float f; uint32_t ui32;} pulse_power;
+static union float_union {float f; uint32_t ui32;} float_xfer;
 
 void arm() {
     gpio_put(PIN_LED_CHARGE_ON, true);
@@ -85,6 +86,8 @@ int main() {
     stdio_init_all();
 
     picoemp_init();
+    dac_init();
+    control_loop_init();
 
     // Init for reset pin (move somewhere else)
     gpio_init(1);
@@ -95,12 +98,13 @@ int main() {
     multicore_launch_core1(serial_console);
 
     pulse_time = PULSE_TIME_US_DEFAULT;
-    pulse_power.f = PULSE_POWER_DEFAULT;
     pulse_delay_cycles = PULSE_DELAY_CYCLES_DEFAULT;
     pulse_time_cycles = PULSE_TIME_CYCLES_DEFAULT;
 
     while(1) {
         psu_monitor_update();
+        control_loop_tick();
+        control_loop_led_tick();
 
         gpio_put(PIN_LED_HV, gpio_get(PIN_IN_CHARGED));
 
@@ -165,10 +169,6 @@ int main() {
                     pulse_time = multicore_fifo_pop_blocking();
                     multicore_fifo_push_blocking(return_ok);
                     break;
-                case cmd_config_pulse_power:
-                    pulse_power.ui32 = multicore_fifo_pop_blocking();
-                    multicore_fifo_push_blocking(return_ok);
-                    break;
                 case cmd_toggle_gp1:
                     gpio_xor_mask(1<<1);
                     multicore_fifo_push_blocking(return_ok);
@@ -184,6 +184,42 @@ int main() {
                     multicore_fifo_push_blocking(
                         psu_monitor_current_is_valid() ? psu_monitor_get_current_period_ns() : 0
                     );
+                    break;
+                case cmd_hv_enable:
+                    control_loop_enable(true);
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                case cmd_hv_disable:
+                    control_loop_enable(false);
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                case cmd_set_voltage:
+                    float_xfer.ui32 = multicore_fifo_pop_blocking();
+                    control_loop_set_target_volts(float_xfer.f);
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                case cmd_get_actual_voltage:
+                    float_xfer.f = control_loop_get_actual_volts();
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking(float_xfer.ui32);
+                    break;
+                case cmd_get_actual_current:
+                    float_xfer.f = control_loop_get_actual_current();
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking(float_xfer.ui32);
+                    break;
+                case cmd_get_faults:
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking(control_loop_get_faults());
+                    break;
+                case cmd_clear_faults:
+                    control_loop_clear_faults();
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                case cmd_set_soft_limit:
+                    float_xfer.ui32 = multicore_fifo_pop_blocking();
+                    control_loop_set_soft_limit(float_xfer.f);
+                    multicore_fifo_push_blocking(return_ok);
                     break;
             }
         }

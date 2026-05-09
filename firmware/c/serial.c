@@ -14,11 +14,10 @@ static char last_command[256];
 #define PULSE_DELAY_CYCLES_DEFAULT 0
 #define PULSE_TIME_CYCLES_DEFAULT 625 // 5us in 8ns cycles
 #define PULSE_TIME_US_DEFAULT 5 // 5us
-#define PULSE_POWER_DEFAULT 0.0122
 static uint32_t pulse_time;
 static uint32_t pulse_delay_cycles;
 static uint32_t pulse_time_cycles;
-static union float_union {float f; uint32_t ui32;} pulse_power;
+static union float_union {float f; uint32_t ui32;} float_xfer;
 
 void read_line() {
     memset(serial_buffer, 0, sizeof(serial_buffer));
@@ -230,14 +229,6 @@ bool handle_command(char *command) {
         else
             pulse_time = strtoul(serial_buffer, unused, 10);
 
-        printf(" pulse_power (current: %f, default: %f)?\n> ", pulse_power.f, PULSE_POWER_DEFAULT);
-        read_line();
-        printf("\n");
-        if (serial_buffer[0] == 0)
-            printf("Using default");
-        else
-            pulse_power.f = strtof(serial_buffer, unused);
-
         multicore_fifo_push_blocking(cmd_config_pulse_time);
         multicore_fifo_push_blocking(pulse_time);
         uint32_t result = multicore_fifo_pop_blocking();
@@ -245,14 +236,7 @@ bool handle_command(char *command) {
             printf("Config pulse_time failed.");
         }
 
-        multicore_fifo_push_blocking(cmd_config_pulse_power);
-        multicore_fifo_push_blocking(pulse_power.ui32);
-        result = multicore_fifo_pop_blocking();
-        if(result != return_ok) {
-            printf("Config pulse_power failed.");
-        }
-
-        printf("pulse_time=%d, pulse_power=%f\n", pulse_time, pulse_power.f);
+        printf("pulse_time=%d\n", pulse_time);
 
         return true;
     }
@@ -308,6 +292,121 @@ bool handle_command(char *command) {
         return true;
     }
 
+    if(strcmp(command, "hve") == 0 || strcmp(command, "hv_enable") == 0) {
+        multicore_fifo_push_blocking(cmd_hv_enable);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("HV output enabled.\n");
+        else
+            printf("HV enable failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "hvd") == 0 || strcmp(command, "hv_disable") == 0) {
+        multicore_fifo_push_blocking(cmd_hv_disable);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("HV output disabled.\n");
+        else
+            printf("HV disable failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "sv") == 0 || strcmp(command, "set_voltage") == 0) {
+        char **unused;
+        printf(" target voltage in volts (0 - 1500)?\n> ");
+        read_line();
+        printf("\n");
+        if (serial_buffer[0] == 0) {
+            printf("Cancelled.\n");
+            return true;
+        }
+        float_xfer.f = strtof(serial_buffer, unused);
+        multicore_fifo_push_blocking(cmd_set_voltage);
+        multicore_fifo_push_blocking(float_xfer.ui32);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("Target voltage set to %.1f V\n", float_xfer.f);
+        else
+            printf("Set voltage failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "sl") == 0 || strcmp(command, "set_limit") == 0) {
+        char **unused;
+        printf(" soft voltage limit in volts (0 - 1500)?\n> ");
+        read_line();
+        printf("\n");
+        if (serial_buffer[0] == 0) {
+            printf("Cancelled.\n");
+            return true;
+        }
+        float_xfer.f = strtof(serial_buffer, unused);
+        multicore_fifo_push_blocking(cmd_set_soft_limit);
+        multicore_fifo_push_blocking(float_xfer.ui32);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("Soft limit set to %.1f V\n", float_xfer.f);
+        else
+            printf("Set soft limit failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "av") == 0 || strcmp(command, "actual_voltage") == 0) {
+        multicore_fifo_push_blocking(cmd_get_actual_voltage);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok) {
+            float_xfer.ui32 = multicore_fifo_pop_blocking();
+            printf("Actual voltage: %.1f V\n", float_xfer.f);
+        } else {
+            printf("Read actual voltage failed!\n");
+        }
+        return true;
+    }
+
+    if(strcmp(command, "ai") == 0 || strcmp(command, "actual_current") == 0) {
+        multicore_fifo_push_blocking(cmd_get_actual_current);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok) {
+            float_xfer.ui32 = multicore_fifo_pop_blocking();
+            printf("Actual current feedback: %.2f Hz (uncalibrated)\n", float_xfer.f);
+        } else {
+            printf("Read actual current failed!\n");
+        }
+        return true;
+    }
+
+    if(strcmp(command, "gf") == 0 || strcmp(command, "get_faults") == 0) {
+        multicore_fifo_push_blocking(cmd_get_faults);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok) {
+            uint32_t faults = multicore_fifo_pop_blocking();
+            if(faults == 0) {
+                printf("No faults.\n");
+            } else {
+                printf("Faults (0x%02x):\n", faults);
+                if(faults & 0x01) printf("  - Circuit open\n");
+                if(faults & 0x02) printf("  - Circuit shorted\n");
+                if(faults & 0x04) printf("  - Circuit unknown\n");
+                if(faults & 0x08) printf("  - Overvoltage\n");
+                if(faults & 0x10) printf("  - Overcurrent\n");
+            }
+        } else {
+            printf("Get faults failed!\n");
+        }
+        return true;
+    }
+
+    if(strcmp(command, "cf") == 0 || strcmp(command, "clear_faults") == 0) {
+        multicore_fifo_push_blocking(cmd_clear_faults);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("Faults cleared.\n");
+        else
+            printf("Clear faults failed!\n");
+        return true;
+    }
+
     if(strcmp(command, "r") == 0 || strcmp(command, "reset") == 0) {
         watchdog_enable(1, 1);
         while(1);
@@ -322,7 +421,6 @@ void serial_console() {
     memset(last_command, 0, sizeof(last_command));
 
     pulse_time = PULSE_TIME_US_DEFAULT;
-    pulse_power.f = PULSE_POWER_DEFAULT;
     pulse_delay_cycles = PULSE_DELAY_CYCLES_DEFAULT;
     pulse_time_cycles = PULSE_TIME_CYCLES_DEFAULT;
     
@@ -342,12 +440,20 @@ void serial_console() {
             printf("- [fa]st_trigger_configure: delay_cycles=%d, time_cycles=%d\n", pulse_delay_cycles, pulse_time_cycles);
             printf("- [in]ternal_hvp\n");
             printf("- [ex]ternal_hvp\n");
-            printf("- [c]onfigure: pulse_time=%d, pulse_power=%f\n", pulse_time, pulse_power.f);
+            printf("- [c]onfigure: pulse_time=%d\n", pulse_time);
             printf("- [t]oggle_gp1\n");
             printf("- [s]tatus\n");
             printf("- [r]eset\n");
-            printf("- [rv] read_voltage: period, Hz, estimated volts\n");
-            printf("- [ri] read_current: period, Hz\n");
+            printf("- [rv] read_voltage: raw PWM period, Hz, estimated volts\n");
+            printf("- [ri] read_current: raw PWM period, Hz\n");
+            printf("- [hve] hv_enable: enable HV output / control loop\n");
+            printf("- [hvd] hv_disable: disable HV output / control loop\n");
+            printf("- [sv] set_voltage: set target voltage (V)\n");
+            printf("- [sl] set_limit: set soft voltage limit (V)\n");
+            printf("- [av] actual_voltage: read estimated actual voltage\n");
+            printf("- [ai] actual_current: read current feedback (Hz)\n");
+            printf("- [gf] get_faults: show active fault flags\n");
+            printf("- [cf] clear_faults: clear sticky fault register\n");
         }
         printf("\n");
         
