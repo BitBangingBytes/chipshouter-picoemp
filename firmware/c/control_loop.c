@@ -20,17 +20,20 @@ static const cal_point_t volt_cal[] = {
     {    0.0f,      0.0f },
     {   20.0f,    250.0f },
     {  100.0f,   1160.0f },
-    {  500.0f,   6200.0f },
-    { 1000.0f,  12425.0f },
-    { 3000.0f,  37000.0f },
+    {  500.0f,   6210.0f },
+    { 1000.0f,  12450.0f },
+    { 1500.0f,  18657.0f },
 };
 #define VOLT_CAL_N  (sizeof(volt_cal) / sizeof(volt_cal[0]))
 
 // Voltage → DAC code (12-bit, 0-4095).
 // Placeholder linear mapping — replace with bench-measured values.
 static const cal_point_t dac_cal[] = {
-    {    0.0f,    0.0f },
-    { 3000.0f, 4095.0f },
+    {  100.0f,  212.0f },
+    {  250.0f,  507.0f },
+    {  500.0f, 1202.0f },
+    { 1000.0f, 2363.0f },
+    { 1500.0f, 3543.0f },
 };
 #define DAC_CAL_N  (sizeof(dac_cal) / sizeof(dac_cal[0]))
 
@@ -126,7 +129,7 @@ static void set_dac_safe(uint16_t code) {
 static void shutdown_output() {
     set_dac_safe(0);
     current_dac = 0;
-    gpio_put(PIN_OUT_HV_Enable, false);
+    gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled
 }
 
 static void check_faults() {
@@ -149,6 +152,7 @@ void control_loop_init() {
     fault_reg    = 0;
     cl_enabled   = false;
     last_tick_us = time_us_64();
+    gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled at startup
 }
 
 void control_loop_tick() {
@@ -234,7 +238,11 @@ void control_loop_led_tick() {
 
 void control_loop_enable(bool en) {
     cl_enabled = en;
-    if (!en) shutdown_output();
+    if (en) {
+        gpio_put(PIN_OUT_HV_Enable, false);  // LOW = enabled — assert before first DAC write
+    } else {
+        shutdown_output();                   // zeros DAC, then sets Enable HIGH (disabled)
+    }
 }
 
 bool control_loop_is_enabled() { return cl_enabled; }

@@ -1,38 +1,44 @@
 ;
-; Timed output sequencer for AD7543 DAC bit-bang over GPIO 19-22.
+; Timed output sequencer for AD7543 DAC bit-bang over GPIO 20-22.
+;
+; Enable (GPIO 19) is NOT driven here — held by control_loop via gpio_put().
 ;
 ; Each 32-bit word from the TX FIFO encodes:
-;   bits [31:28] → 4 GPIO states: Enable, Data, Clock, Strobe (MSB first)
-;   bits [27:0]  → delay count (loops at SM clock rate, 1 MHz → 1 µs/count)
+;   bit  31    → Data  (GPIO 20): HIGH = logic 0, LOW = logic 1 (inverted)
+;   bit  30    → Clock (GPIO 21): HIGH = idle,    LOW = active  (inverted)
+;   bit  29    → Strobe(GPIO 22)
+;   bits [28:0]→ delay count (loops at SM clock rate, 1 MHz → 1 µs/count)
+;
+; Total pin-state duration per word = delay_count + 4 µs (4-cycle instruction overhead).
 ;
 ; SM clock divider set to 125 (125 MHz / 125 = 1 MHz) so delay unit = 1 µs.
-; Set pins base = PIN_OUT_HV_Enable (GPIO 19), count = 4 (consecutive).
 ;
 .program dac_sequencer
 
 .wrap_target
     pull block          ; stall until next word arrives from DMA/CPU
-    out pins, 4         ; top 4 bits → Enable, Data, Clock, Strobe
-    out x, 28           ; lower 28 bits → delay count
+    out pins, 3         ; top 3 bits → Data, Clock, Strobe
+    out x, 29           ; lower 29 bits → delay count
 delay:
-    jmp x-- delay       ; busy-wait delay (1 µs per iteration at 1 MHz)
+    jmp x-- delay       ; busy-wait (1 µs per iteration at 1 MHz)
 .wrap
 
 % c-sdk {
 #include "hardware/clocks.h"
 
+// pin_base must be PIN_OUT_HV_Data (GPIO 20); 3 consecutive pins: Data, Clock, Strobe.
 static inline void dac_sequencer_program_init(PIO pio, uint sm, uint offset, uint pin_base) {
     pio_sm_config c = dac_sequencer_program_get_default_config(offset);
-    sm_config_set_out_pins(&c, pin_base, 4);
+    sm_config_set_out_pins(&c, pin_base, 3);
     // 1 MHz SM clock: 125 MHz / 125 = 1 MHz
     sm_config_set_clkdiv(&c, 125.0f);
     // shift out from MSB, auto-pull disabled (we pull explicitly)
     sm_config_set_out_shift(&c, false, false, 32);
 
-    for (uint i = 0; i < 4; i++) {
+    for (uint i = 0; i < 3; i++) {
         pio_gpio_init(pio, pin_base + i);
     }
-    pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 4, true);  // outputs
+    pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 3, true);  // outputs
     pio_sm_init(pio, sm, offset, &c);
     pio_sm_set_enabled(pio, sm, true);
 }
