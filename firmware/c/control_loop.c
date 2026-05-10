@@ -26,33 +26,6 @@ static const cal_point_t volt_cal[] = {
 };
 #define VOLT_CAL_N  (sizeof(volt_cal) / sizeof(volt_cal[0]))
 
-// Voltage → DAC code (12-bit, 0-4095).
-// Placeholder linear mapping — replace with bench-measured values.
-static const cal_point_t dac_cal[] = {
-    {  100.0f,  212.0f },
-    {  250.0f,  507.0f },
-    {  500.0f, 1202.0f },
-    { 1000.0f, 2363.0f },
-    { 1500.0f, 3543.0f },
-};
-#define DAC_CAL_N  (sizeof(dac_cal) / sizeof(dac_cal[0]))
-
-// Linear interpolation between table entries.
-static float interp(const cal_point_t *tbl, uint n, float x_volts, bool invert) {
-    // invert=false: volts→y  invert=true: y→volts (for current, unused here)
-    if (n < 2) return 0.0f;
-    if (x_volts <= tbl[0].volts) return tbl[0].hz;
-    if (x_volts >= tbl[n-1].volts) return tbl[n-1].hz;
-    for (uint i = 1; i < n; i++) {
-        if (x_volts <= tbl[i].volts) {
-            float t = (x_volts - tbl[i-1].volts) / (tbl[i].volts - tbl[i-1].volts);
-            return tbl[i-1].hz + t * (tbl[i].hz - tbl[i-1].hz);
-        }
-    }
-    return tbl[n-1].hz;
-    (void)invert;
-}
-
 // Convert period_ns → volts using the voltage calibration table (inverse lookup).
 static float period_ns_to_volts(uint32_t period_ns) {
     if (period_ns == 0) return 0.0f;
@@ -69,26 +42,25 @@ static float period_ns_to_volts(uint32_t period_ns) {
     return volt_cal[VOLT_CAL_N-1].volts;
 }
 
-// Convert volts → DAC code (clamped 0-4095).
-static uint16_t volts_to_dac(float volts) {
-    float code = interp(dac_cal, DAC_CAL_N, volts, false);
-    if (code < 0.0f) code = 0.0f;
-    if (code > 4095.0f) code = 4095.0f;
-    return (uint16_t)code;
-}
-
 // ---------------------------------------------------------------------------
 // Control parameters
 // ---------------------------------------------------------------------------
 
 // Max DAC counts to change per control tick to limit slew rate.
-#define RAMP_STEP_MAX    20u
+#define RAMP_STEP_MAX    100u
 
 // Error deadband in volts — don't adjust DAC if within this window.
 #define DEADBAND_VOLTS   1.0f
 
-// Control tick interval in µs (10 ms).
+// Control tick interval in µs (60 ms).
 #define TICK_INTERVAL_US 60000u
+
+// Proportional gain: DAC counts per volt of error.
+// Roughly the slope of the V→DAC characteristic (~2-2.8 codes/V across range).
+#define KP_DAC_PER_VOLT  2.5f
+
+// Starting DAC code on enable; closed-loop ramps from here toward setpoint.
+#define INITIAL_DAC_CODE 10u
 
 // Current: rough conversion — placeholder (period_ns → amps not yet calibrated).
 // Returns Hz for now; replace with calibrated formula.
@@ -182,18 +154,17 @@ void control_loop_tick() {
     // Deadband — no adjustment needed
     if (fabsf(error) <= DEADBAND_VOLTS) return;
 
-    // Desired DAC code for setpoint
-    uint16_t desired_dac = volts_to_dac(setpoint);
-
-    // Ramp: limit step size
-    int32_t delta = (int32_t)desired_dac - (int32_t)current_dac;
+    // Proportional control: DAC drifts toward whatever code produces setpoint.
+    // Sign of error drives direction; ramp limit caps slew rate.
+    int32_t delta = (int32_t)(error * KP_DAC_PER_VOLT);
     if (delta >  (int32_t)RAMP_STEP_MAX) delta =  (int32_t)RAMP_STEP_MAX;
     if (delta < -(int32_t)RAMP_STEP_MAX) delta = -(int32_t)RAMP_STEP_MAX;
 
-    uint16_t next_dac = (uint16_t)((int32_t)current_dac + delta);
+    int32_t next_dac = (int32_t)current_dac + delta;
+    if (next_dac < 0)    next_dac = 0;
     if (next_dac > 4095) next_dac = 4095;
 
-    set_dac_safe(next_dac);
+    set_dac_safe((uint16_t)next_dac);
 }
 
 void control_loop_led_tick() {
@@ -240,6 +211,10 @@ void control_loop_enable(bool en) {
     cl_enabled = en;
     if (en) {
         gpio_put(PIN_OUT_HV_Enable, false);  // LOW = enabled — assert before first DAC write
+        // Seed DAC at a low starting code; closed-loop ramps from here.
+        while (!dac_write_done()) tight_loop_contents();
+        current_dac = INITIAL_DAC_CODE;
+        dac_write(INITIAL_DAC_CODE);
     } else {
         shutdown_output();                   // zeros DAC, then sets Enable HIGH (disabled)
     }
