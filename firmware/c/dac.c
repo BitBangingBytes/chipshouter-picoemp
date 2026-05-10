@@ -96,9 +96,6 @@ void dac_init() {
     // PIO controls GPIO 20-22 (Data, Clock, Strobe); GPIO 19 (Enable) stays as GPIO.
     dac_sequencer_program_init(DAC_PIO, DAC_SM, pio_offset, PIN_OUT_HV_Data);
 
-    // Prime the SM with one idle word so CLK and DAT start HIGH immediately.
-    pio_sm_put_blocking(DAC_PIO, DAC_SM, word(IDLE_PINS, 0));
-
     dma_chan = dma_claim_unused_channel(true);
 
     dma_channel_config cfg = dma_channel_get_default_config(dma_chan);

@@ -85,10 +85,10 @@ static uint16_t volts_to_dac(float volts) {
 #define RAMP_STEP_MAX    20u
 
 // Error deadband in volts — don't adjust DAC if within this window.
-#define DEADBAND_VOLTS   5.0f
+#define DEADBAND_VOLTS   1.0f
 
 // Control tick interval in µs (10 ms).
-#define TICK_INTERVAL_US 10000u
+#define TICK_INTERVAL_US 60000u
 
 // Current: rough conversion — placeholder (period_ns → amps not yet calibrated).
 // Returns Hz for now; replace with calibrated formula.
