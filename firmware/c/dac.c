@@ -37,7 +37,7 @@
 #define T_STROBE_US         36u   // → 40 µs
 #define T_IDLE_US            0u   // →  4 µs trailing idle
 
-// Maximum words: 12 bits × 3 words + 2 (strobe + idle) = 38 → round to 40
+// Maximum words: 1 (preamble) + 12 bits × 3 words + 2 (strobe + idle) = 39 → round to 40
 #define SEQ_MAX_WORDS 40u
 
 static uint pio_offset;
@@ -55,14 +55,21 @@ static inline uint32_t word(uint32_t pins, uint32_t delay_us) {
 // Idle state: CLK=HIGH, DAT=HIGH (= logic 0), STR=LOW
 #define IDLE_PINS (PIN_CLK | PIN_DAT)
 
-// Build the 38-word sequence for a 12-bit DAC write.
+// Build the 39-word sequence for a 12-bit DAC write.
 // Protocol: clock idles HIGH; data captured on rising edge; 3 words per bit:
 //   Word A: CLK=LOW,  DAT=current bit          → 43 µs
 //   Word B: CLK=HIGH, DAT=current bit (hold)   → 42 µs  ← rising edge at start
 //   Word C: CLK=HIGH, DAT=next bit    (setup)  → 42 µs  ← data changes here
+// One preamble word sets up bit 11 on DAT (CLK still HIGH) for 42 µs before
+// the first falling edge — bits 10..0 get the same setup window from the
+// previous bit's Word C, but bit 11 has no predecessor.
 // Data is inverted: logic 0 → GPIO HIGH (PIN_DAT set), logic 1 → GPIO LOW.
 static uint build_sequence(uint32_t *buf, uint16_t value) {
     uint n = 0;
+
+    // Preamble: setup bit 11 on DAT while CLK is still HIGH (idle).
+    uint32_t first_dat = ((value >> 11) & 1u) ? 0u : PIN_DAT;
+    buf[n++] = word(PIN_CLK | first_dat, T_CLK_HIGH_SETUP_US);
 
     for (int bit = 11; bit >= 0; bit--) {
         uint32_t dat = ((value >> bit) & 1u) ? 0u : PIN_DAT;   // inverted
