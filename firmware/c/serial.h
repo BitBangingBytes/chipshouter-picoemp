@@ -27,6 +27,8 @@
 #define cmd_clear_faults 22
 // cmd word + float bits follow
 #define cmd_set_soft_limit 23
+// cmd word + uint16 (0-4095) value follows — only handled when DEBUG_DAC is defined
+#define cmd_debug_dac_raw 24
 
 #define return_ok 0
 #define return_failed 1

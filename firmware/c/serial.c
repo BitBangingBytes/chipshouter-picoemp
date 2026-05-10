@@ -407,6 +407,35 @@ bool handle_command(char *command) {
         return true;
     }
 
+#ifdef DEBUG_DAC
+    if(strcmp(command, "dd") == 0 || strcmp(command, "debug_dac") == 0) {
+        char **unused;
+        printf(" raw DAC code (0-4095, hex with 0x or decimal)?\n> ");
+        read_line();
+        printf("\n");
+        if (serial_buffer[0] == 0) {
+            printf("Cancelled.\n");
+            return true;
+        }
+        unsigned long val = strtoul(serial_buffer, unused, 0);
+        if (val > 4095) {
+            printf("Value out of range (0-4095).\n");
+            return true;
+        }
+        multicore_fifo_push_blocking(cmd_debug_dac_raw);
+        multicore_fifo_push_blocking((uint32_t)val);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok) {
+            printf("Wrote raw DAC code %lu (0x%03lx, 0b", val, val);
+            for (int b = 11; b >= 0; b--) putchar(((val >> b) & 1u) ? '1' : '0');
+            printf(")\n");
+        } else {
+            printf("Raw DAC write failed!\n");
+        }
+        return true;
+    }
+#endif
+
     if(strcmp(command, "r") == 0 || strcmp(command, "reset") == 0) {
         watchdog_enable(1, 1);
         while(1);
@@ -454,6 +483,9 @@ void serial_console() {
             printf("- [ai] actual_current: read current feedback (Hz)\n");
             printf("- [gf] get_faults: show active fault flags\n");
             printf("- [cf] clear_faults: clear sticky fault register\n");
+#ifdef DEBUG_DAC
+            printf("- [dd] debug_dac: write a raw 12-bit DAC code (0-4095), bypassing the ramp\n");
+#endif
         }
         printf("\n");
         

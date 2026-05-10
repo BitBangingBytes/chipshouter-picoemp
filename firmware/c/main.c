@@ -221,6 +221,16 @@ int main() {
                     control_loop_set_soft_limit(float_xfer.f);
                     multicore_fifo_push_blocking(return_ok);
                     break;
+#ifdef DEBUG_DAC
+                case cmd_debug_dac_raw: {
+                    uint32_t raw = multicore_fifo_pop_blocking();
+                    // Wait for any in-flight DMA to drain before issuing a new write.
+                    while (!dac_write_done()) tight_loop_contents();
+                    dac_write((uint16_t)(raw & 0x0FFFu));
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                }
+#endif
             }
         }
 

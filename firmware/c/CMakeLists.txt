@@ -6,7 +6,13 @@ project(picoemp)
  
 pico_sdk_init()
 
+option(DEBUG_DAC "Enable raw DAC write debug serial command" OFF)
+
 add_executable(picoemp)
+
+if(DEBUG_DAC)
+    target_compile_definitions(picoemp PRIVATE DEBUG_DAC=1)
+endif()
 
 pico_generate_pio_header(picoemp ${CMAKE_CURRENT_LIST_DIR}/trigger_basic.pio)
 pico_generate_pio_header(picoemp ${CMAKE_CURRENT_LIST_DIR}/freq_measure.pio)
