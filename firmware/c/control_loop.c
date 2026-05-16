@@ -52,9 +52,6 @@ static float period_ns_to_volts(uint32_t period_ns) {
 // Error deadband in volts — don't adjust DAC if within this window.
 #define DEADBAND_VOLTS   1.0f
 
-// Control tick interval in µs (60 ms).
-#define TICK_INTERVAL_US 60000u
-
 // Proportional gain: DAC counts per volt of error.
 // Roughly the slope of the V→DAC characteristic (~2-2.8 codes/V across range).
 #define KP_DAC_PER_VOLT  2.5f
@@ -73,14 +70,14 @@ static float period_ns_to_current(uint32_t period_ns) {
 // State
 // ---------------------------------------------------------------------------
 
-static bool     cl_enabled      = false;
-static float    target_volts    = 0.0f;
-static float    soft_limit      = HARD_LIMIT_VOLTS;
-static uint16_t current_dac     = 0;
-static float    actual_volts    = 0.0f;
-static float    actual_current  = 0.0f;
-static uint32_t fault_reg       = 0;
-static uint64_t last_tick_us    = 0;
+static bool     cl_enabled         = false;
+static float    target_volts       = 0.0f;
+static float    soft_limit         = HARD_LIMIT_VOLTS;
+static uint16_t current_dac        = 0;
+static float    actual_volts       = 0.0f;
+static float    actual_current     = 0.0f;
+static uint32_t fault_reg          = 0;
+static uint32_t last_processed_seq = 0;  // last voltage-PWM sample_seq we acted on
 
 // LED flash state machine
 static uint64_t led_next_us     = 0;
@@ -118,21 +115,18 @@ static void check_faults() {
 // ---------------------------------------------------------------------------
 
 void control_loop_init() {
-    current_dac  = 0;
-    target_volts = 0.0f;
-    soft_limit   = HARD_LIMIT_VOLTS;
-    fault_reg    = 0;
-    cl_enabled   = false;
-    last_tick_us = time_us_64();
+    current_dac        = 0;
+    target_volts       = 0.0f;
+    soft_limit         = HARD_LIMIT_VOLTS;
+    fault_reg          = 0;
+    cl_enabled         = false;
+    last_processed_seq = 0;
     gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled at startup
 }
 
 void control_loop_tick() {
-    uint64_t now = time_us_64();
-    if ((now - last_tick_us) < TICK_INTERVAL_US) return;
-    last_tick_us = now;
-
-    // Update feedback
+    // Always refresh feedback and check faults so safety/observability work
+    // independently of how often a fresh PWM average arrives.
     actual_volts   = period_ns_to_volts(
         psu_monitor_voltage_is_valid() ? psu_monitor_get_voltage_period_ns() : 0);
     actual_current = period_ns_to_current(
@@ -140,10 +134,16 @@ void control_loop_tick() {
 
     check_faults();
 
-    if (!cl_enabled || fault_reg != 0) {
-        if (fault_reg != 0) shutdown_output();
+    if (fault_reg != 0) {
+        shutdown_output();
         return;
     }
+    if (!cl_enabled) return;
+
+    // Gate the DAC adjustment on a freshly completed PWM average.
+    uint32_t seq = psu_monitor_voltage_sample_seq();
+    if (seq == last_processed_seq) return;
+    last_processed_seq = seq;
 
     // Clamp target to hard and soft limits
     float ceiling = (HARD_LIMIT_VOLTS < soft_limit) ? HARD_LIMIT_VOLTS : soft_limit;

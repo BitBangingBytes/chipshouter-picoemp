@@ -23,6 +23,7 @@ static uint64_t voltage_acc          = 0;
 static uint32_t voltage_acc_n        = 0;
 static uint32_t voltage_period_ns    = 0;
 static uint64_t voltage_last_samp_us = 0;
+static uint32_t voltage_sample_seq   = 0;
 
 // Current accumulator (SM_CURR)
 static uint64_t current_acc          = 0;
@@ -54,6 +55,7 @@ void psu_monitor_update() {
             voltage_period_ns = acc_to_period_ns(voltage_acc, voltage_acc_n);
             voltage_acc   = 0;
             voltage_acc_n = 0;
+            voltage_sample_seq++;
         }
     }
 
@@ -85,4 +87,8 @@ bool psu_monitor_voltage_is_valid() {
 bool psu_monitor_current_is_valid() {
     if (current_period_ns == 0) return false;
     return (time_us_64() - current_last_samp_us) < CURRENT_STALE_THRESHOLD_US;
+}
+
+uint32_t psu_monitor_voltage_sample_seq() {
+    return voltage_sample_seq;
 }
