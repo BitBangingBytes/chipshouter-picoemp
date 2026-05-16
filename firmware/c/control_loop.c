@@ -59,6 +59,11 @@ static float period_ns_to_volts(uint32_t period_ns) {
 // Starting DAC code on enable; closed-loop ramps from here toward setpoint.
 #define INITIAL_DAC_CODE 10u
 
+// Minimum wall-clock time between DAC adjustments. Floors the update rate so
+// the PSU has time to respond before the next correction — without this, at
+// high voltages a fresh PWM average can arrive every few ms and the loop hunts.
+#define MIN_ADJUST_DWELL_US 500000u   // 500 ms
+
 // Current: rough conversion — placeholder (period_ns → amps not yet calibrated).
 // Returns Hz for now; replace with calibrated formula.
 static float period_ns_to_current(uint32_t period_ns) {
@@ -78,6 +83,8 @@ static float    actual_volts       = 0.0f;
 static float    actual_current     = 0.0f;
 static uint32_t fault_reg          = 0;
 static uint32_t last_processed_seq = 0;  // last voltage-PWM sample_seq we acted on
+static bool     shutdown_latched   = false; // true while fault shutdown_output has already run
+static uint64_t last_adjust_us     = 0;     // wall time of last DAC adjustment (for MIN_ADJUST_DWELL_US)
 
 // LED flash state machine
 static uint64_t led_next_us     = 0;
@@ -121,6 +128,8 @@ void control_loop_init() {
     fault_reg          = 0;
     cl_enabled         = false;
     last_processed_seq = 0;
+    shutdown_latched   = false;
+    last_adjust_us     = 0;
     gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled at startup
 }
 
@@ -135,7 +144,12 @@ void control_loop_tick() {
     check_faults();
 
     if (fault_reg != 0) {
-        shutdown_output();
+        // Latch the shutdown so we don't keep firing DAC writes (CLK/STR pulses)
+        // every main-loop iteration while the fault persists.
+        if (!shutdown_latched) {
+            shutdown_output();
+            shutdown_latched = true;
+        }
         return;
     }
     if (!cl_enabled) return;
@@ -153,6 +167,12 @@ void control_loop_tick() {
 
     // Deadband — no adjustment needed
     if (fabsf(error) <= DEADBAND_VOLTS) return;
+
+    // Minimum dwell between adjustments — caps update rate even when fresh PWM
+    // averages arrive faster than the PSU can respond.
+    uint64_t now = time_us_64();
+    if ((now - last_adjust_us) < MIN_ADJUST_DWELL_US) return;
+    last_adjust_us = now;
 
     // Proportional control: DAC drifts toward whatever code produces setpoint.
     // Sign of error drives direction; ramp limit caps slew rate.
@@ -215,6 +235,9 @@ void control_loop_enable(bool en) {
         while (!dac_write_done()) tight_loop_contents();
         current_dac = INITIAL_DAC_CODE;
         dac_write(INITIAL_DAC_CODE);
+        // Start dwell timer from the seed so the first closed-loop adjustment
+        // waits MIN_ADJUST_DWELL_US, giving the PSU time to respond.
+        last_adjust_us = time_us_64();
     } else {
         shutdown_output();                   // zeros DAC, then sets Enable HIGH (disabled)
     }
@@ -248,4 +271,5 @@ uint32_t control_loop_get_faults() { return fault_reg; }
 
 void control_loop_clear_faults() {
     fault_reg = 0;
+    shutdown_latched = false;
 }

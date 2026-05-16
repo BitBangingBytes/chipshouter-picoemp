@@ -18,9 +18,9 @@
 //   bit 31 (MSB of group) → GPIO 22 = PIN_OUT_HV_Strobe
 //
 // Enable (GPIO 19) is NOT driven by the PIO — held by control_loop via gpio_put().
-#define PIN_DAT  (1u << 29)   // GPIO 20 = Data  (HIGH = logic 0, LOW = logic 1)
-#define PIN_CLK  (1u << 30)   // GPIO 21 = Clock (HIGH = idle, LOW = active)
-#define PIN_STR  (1u << 31)   // GPIO 22 = Strobe
+#define PIN_DAT  (1u << 29)   // GPIO 20 = Data   (HIGH = logic 0, LOW = logic 1)
+#define PIN_CLK  (1u << 30)   // GPIO 21 = Clock  (HIGH = idle, LOW = active)
+#define PIN_STR  (1u << 31)   // GPIO 22 = Strobe (idle HIGH; LOW during write, rising edge at end latches)
 
 // Timing — delay values for the PIO word.
 // Pin-state duration = delay_value + 4 µs (4-cycle instruction overhead per word).
@@ -30,11 +30,11 @@
 //         84 µs HIGH total, split into two 42 µs halves → delay = 42 - 4 = 38 each
 //           Half 1: hold current data stable after rising edge
 //           Half 2: present next data bit (setup for next falling edge)
-// Strobe: 40 µs HIGH → delay = 40 - 4 = 36
+// Strobe: 40 µs STR HIGH after the L→H latch edge → delay = 40 - 4 = 36
 #define T_CLK_LOW_US        39u   // → 43 µs
 #define T_CLK_HIGH_HOLD_US  38u   // → 42 µs (data hold after rising edge)
 #define T_CLK_HIGH_SETUP_US 38u   // → 42 µs (next data setup before falling edge)
-#define T_STROBE_US         36u   // → 40 µs
+#define T_STROBE_US         36u   // → 40 µs (STR HIGH hold after latch edge)
 #define T_IDLE_US            0u   // →  4 µs trailing idle
 
 // Maximum words: 1 (preamble) + 12 bits × 3 words + 2 (strobe + idle) = 39 → round to 40
@@ -52,22 +52,23 @@ static inline uint32_t word(uint32_t pins, uint32_t delay_us) {
     return pins | (delay_us & 0x1FFFFFFFu);
 }
 
-// Idle state: CLK=HIGH, DAT=HIGH (= logic 0), STR=LOW
-#define IDLE_PINS (PIN_CLK | PIN_DAT)
+// Idle state (between writes): CLK=HIGH, DAT=HIGH (logic 0), STR=HIGH (chip deselected)
+#define IDLE_PINS (PIN_CLK | PIN_DAT | PIN_STR)
 
 // Build the 39-word sequence for a 12-bit DAC write.
-// Protocol: clock idles HIGH; data captured on rising edge; 3 words per bit:
+// Protocol: STR LOW for the duration of the write, then HIGH at the end (rising
+// edge latches). CLK idles HIGH, data captured on rising edge; 3 words per bit:
 //   Word A: CLK=LOW,  DAT=current bit          → 43 µs
 //   Word B: CLK=HIGH, DAT=current bit (hold)   → 42 µs  ← rising edge at start
 //   Word C: CLK=HIGH, DAT=next bit    (setup)  → 42 µs  ← data changes here
-// One preamble word sets up bit 11 on DAT (CLK still HIGH) for 42 µs before
-// the first falling edge — bits 10..0 get the same setup window from the
-// previous bit's Word C, but bit 11 has no predecessor.
+// The preamble word drops STR LOW and sets up bit 11 on DAT (CLK still HIGH) for
+// 42 µs before the first falling edge — bits 10..0 get the same setup window
+// from the previous bit's Word C, but bit 11 has no predecessor.
 // Data is inverted: logic 0 → GPIO HIGH (PIN_DAT set), logic 1 → GPIO LOW.
 static uint build_sequence(uint32_t *buf, uint16_t value) {
     uint n = 0;
 
-    // Preamble: setup bit 11 on DAT while CLK is still HIGH (idle).
+    // Preamble: drop STR LOW (begin transaction), setup bit 11 on DAT, CLK HIGH.
     uint32_t first_dat = ((value >> 11) & 1u) ? 0u : PIN_DAT;
     buf[n++] = word(PIN_CLK | first_dat, T_CLK_HIGH_SETUP_US);
 
@@ -78,7 +79,7 @@ static uint build_sequence(uint32_t *buf, uint16_t value) {
         if (bit > 0)
             next_dat = ((value >> (bit-1)) & 1u) ? 0u : PIN_DAT;
         else
-            next_dat = PIN_DAT;   // data returns to idle (HIGH = logic 0) after last bit
+            next_dat = PIN_DAT;   // DAT returns to idle (HIGH = logic 0) after last bit
 
         // A: CLK LOW — current bit stable, falling edge at start of this word
         buf[n++] = word(dat, T_CLK_LOW_US);
@@ -90,9 +91,9 @@ static uint build_sequence(uint32_t *buf, uint16_t value) {
         buf[n++] = word(PIN_CLK | next_dat, T_CLK_HIGH_SETUP_US);
     }
 
-    // Strobe HIGH for 40 µs to latch shift register into DAC output register
-    buf[n++] = word(PIN_CLK | PIN_DAT | PIN_STR, T_STROBE_US);
-    // Return to idle
+    // Strobe: STR rising edge (LOW→HIGH) latches data; hold HIGH 40 µs.
+    buf[n++] = word(IDLE_PINS, T_STROBE_US);
+    // Trailing settle in idle state.
     buf[n++] = word(IDLE_PINS, T_IDLE_US);
 
     return n;

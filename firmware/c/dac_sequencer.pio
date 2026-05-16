@@ -40,10 +40,11 @@ static inline void dac_sequencer_program_init(PIO pio, uint sm, uint offset, uin
     }
     pio_sm_set_consecutive_pindirs(pio, sm, pin_base, 3, true);  // outputs
     pio_sm_init(pio, sm, offset, &c);
-    // Set idle state (CLK=HIGH, DAT=HIGH, STR=LOW) before enabling to avoid a
-    // spurious CLK LOW→HIGH transition that the AD7543 would count as a data bit.
+    // Set idle state (CLK=HIGH, DAT=HIGH, STR=HIGH) before enabling to avoid a
+    // spurious CLK LOW→HIGH transition that the AD7543 would count as a data bit,
+    // and to keep STR (active-low chip select) de-asserted at idle.
     uint32_t idle_mask = (1u << pin_base) | (1u << (pin_base + 1u)) | (1u << (pin_base + 2u));
-    uint32_t idle_vals = (1u << pin_base) | (1u << (pin_base + 1u));  // DAT=H, CLK=H, STR=L
+    uint32_t idle_vals = idle_mask;  // all three HIGH
     pio_sm_set_pins_with_mask(pio, sm, idle_vals, idle_mask);
     pio_sm_set_enabled(pio, sm, true);
 }
