@@ -41,3 +41,9 @@ float control_loop_get_actual_current();
 // Fault register — sticky bits cleared only by control_loop_clear_faults().
 uint32_t control_loop_get_faults();
 void control_loop_clear_faults();
+
+// Manual-DAC mode. When enabled (set by a raw `dd` write while HV is on),
+// the closed loop stops issuing DAC adjustments but still refreshes feedback
+// and checks faults. Cleared on every control_loop_enable() transition.
+void control_loop_set_manual_mode(bool en);
+bool control_loop_in_manual_mode();

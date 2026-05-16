@@ -27,8 +27,20 @@
 #define cmd_clear_faults 22
 // cmd word + float bits follow
 #define cmd_set_soft_limit 23
-// cmd word + uint16 (0-4095) value follows — only handled when DEBUG_DAC is defined
+// cmd word + uint16 (0-4095) value follows. Triggers manual_mode on the control
+// loop when issued while HV is enabled so the closed loop stops fighting the write.
 #define cmd_debug_dac_raw 24
+
+// Calibration commands — runtime cal table for PWM→volts.
+// cmd_cal_capture: cmd word + float bits (volts) follow.
+#define cmd_cal_capture 25
+// cmd_cal_remove: cmd word + uint32 index follows.
+#define cmd_cal_remove  26
+#define cmd_cal_reset   27
+#define cmd_cal_save    28
+// cmd_cal_list: Core 0 pushes ok, then n_points, then for each point
+// pushes volts (ui32 float bits) and hz (ui32 float bits), then source enum.
+#define cmd_cal_list    29
 
 #define return_ok 0
 #define return_failed 1

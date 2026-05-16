@@ -1,4 +1,5 @@
 #include "control_loop.h"
+#include "cal.h"
 #include "dac.h"
 #include "psu_monitor.h"
 #include "picoemp.h"
@@ -7,40 +8,6 @@
 #include "pico/stdlib.h"
 
 #include <math.h>
-
-// ---------------------------------------------------------------------------
-// Calibration tables
-// ---------------------------------------------------------------------------
-
-// Voltage → PWM frequency (Hz) — derived from bench measurements.
-// Used to convert the voltage-feedback period_ns reading into volts.
-typedef struct { float volts; float hz; } cal_point_t;
-
-static const cal_point_t volt_cal[] = {
-    {    0.0f,      0.0f },
-    {   20.0f,    250.0f },
-    {  100.0f,   1160.0f },
-    {  500.0f,   6210.0f },
-    { 1000.0f,  12450.0f },
-    { 1500.0f,  18657.0f },
-};
-#define VOLT_CAL_N  (sizeof(volt_cal) / sizeof(volt_cal[0]))
-
-// Convert period_ns → volts using the voltage calibration table (inverse lookup).
-static float period_ns_to_volts(uint32_t period_ns) {
-    if (period_ns == 0) return 0.0f;
-    float hz = 1000000000.0f / (float)period_ns;
-    // Reverse lookup: find volts given hz
-    if (hz <= volt_cal[0].hz) return volt_cal[0].volts;
-    if (hz >= volt_cal[VOLT_CAL_N-1].hz) return volt_cal[VOLT_CAL_N-1].volts;
-    for (uint i = 1; i < VOLT_CAL_N; i++) {
-        if (hz <= volt_cal[i].hz) {
-            float t = (hz - volt_cal[i-1].hz) / (volt_cal[i].hz - volt_cal[i-1].hz);
-            return volt_cal[i-1].volts + t * (volt_cal[i].volts - volt_cal[i-1].volts);
-        }
-    }
-    return volt_cal[VOLT_CAL_N-1].volts;
-}
 
 // ---------------------------------------------------------------------------
 // Control parameters
@@ -54,7 +21,7 @@ static float period_ns_to_volts(uint32_t period_ns) {
 
 // Proportional gain: DAC counts per volt of error.
 // Roughly the slope of the V→DAC characteristic (~2-2.8 codes/V across range).
-#define KP_DAC_PER_VOLT  2.5f
+#define KP_DAC_PER_VOLT  1.5f
 
 // Starting DAC code on enable; closed-loop ramps from here toward setpoint.
 #define INITIAL_DAC_CODE 10u
@@ -62,7 +29,7 @@ static float period_ns_to_volts(uint32_t period_ns) {
 // Minimum wall-clock time between DAC adjustments. Floors the update rate so
 // the PSU has time to respond before the next correction — without this, at
 // high voltages a fresh PWM average can arrive every few ms and the loop hunts.
-#define MIN_ADJUST_DWELL_US 500000u   // 500 ms
+#define MIN_ADJUST_DWELL_US 250000u   // 250 ms
 
 // Current: rough conversion — placeholder (period_ns → amps not yet calibrated).
 // Returns Hz for now; replace with calibrated formula.
@@ -85,6 +52,7 @@ static uint32_t fault_reg          = 0;
 static uint32_t last_processed_seq = 0;  // last voltage-PWM sample_seq we acted on
 static bool     shutdown_latched   = false; // true while fault shutdown_output has already run
 static uint64_t last_adjust_us     = 0;     // wall time of last DAC adjustment (for MIN_ADJUST_DWELL_US)
+static bool     manual_mode        = false; // closed-loop paused for raw DAC writes
 
 // LED flash state machine
 static uint64_t led_next_us     = 0;
@@ -130,13 +98,14 @@ void control_loop_init() {
     last_processed_seq = 0;
     shutdown_latched   = false;
     last_adjust_us     = 0;
+    manual_mode        = false;
     gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled at startup
 }
 
 void control_loop_tick() {
     // Always refresh feedback and check faults so safety/observability work
     // independently of how often a fresh PWM average arrives.
-    actual_volts   = period_ns_to_volts(
+    actual_volts   = cal_period_ns_to_volts(
         psu_monitor_voltage_is_valid() ? psu_monitor_get_voltage_period_ns() : 0);
     actual_current = period_ns_to_current(
         psu_monitor_current_is_valid() ? psu_monitor_get_current_period_ns() : 0);
@@ -153,6 +122,10 @@ void control_loop_tick() {
         return;
     }
     if (!cl_enabled) return;
+
+    // Manual DAC mode (entered by raw `dd` while HV enabled): keep feedback /
+    // fault paths alive but stop driving the DAC ourselves.
+    if (manual_mode) return;
 
     // Gate the DAC adjustment on a freshly completed PWM average.
     uint32_t seq = psu_monitor_voltage_sample_seq();
@@ -228,7 +201,8 @@ void control_loop_led_tick() {
 }
 
 void control_loop_enable(bool en) {
-    cl_enabled = en;
+    cl_enabled  = en;
+    manual_mode = false;   // any enable/disable transition exits manual mode
     if (en) {
         gpio_put(PIN_OUT_HV_Enable, false);  // LOW = enabled — assert before first DAC write
         // Seed DAC at a low starting code; closed-loop ramps from here.
@@ -273,3 +247,6 @@ void control_loop_clear_faults() {
     fault_reg = 0;
     shutdown_latched = false;
 }
+
+void control_loop_set_manual_mode(bool en) { manual_mode = en; }
+bool control_loop_in_manual_mode()         { return manual_mode; }

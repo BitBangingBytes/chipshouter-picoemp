@@ -7,6 +7,7 @@
 #include "picoemp.h"
 #include "psu_monitor.h"
 #include "dac.h"
+#include "cal.h"
 #include "control_loop.h"
 #include "serial.h"
 
@@ -87,6 +88,7 @@ int main() {
 
     picoemp_init();
     dac_init();
+    cal_init();
     control_loop_init();
 
     // Init for reset pin (move somewhere else)
@@ -221,16 +223,52 @@ int main() {
                     control_loop_set_soft_limit(float_xfer.f);
                     multicore_fifo_push_blocking(return_ok);
                     break;
-#ifdef DEBUG_DAC
                 case cmd_debug_dac_raw: {
                     uint32_t raw = multicore_fifo_pop_blocking();
                     // Wait for any in-flight DMA to drain before issuing a new write.
                     while (!dac_write_done()) tight_loop_contents();
                     dac_write((uint16_t)(raw & 0x0FFFu));
+                    // If HV is enabled, pause the closed loop so it doesn't fight us.
+                    if (control_loop_is_enabled()) control_loop_set_manual_mode(true);
                     multicore_fifo_push_blocking(return_ok);
                     break;
                 }
-#endif
+                case cmd_cal_capture: {
+                    float_xfer.ui32 = multicore_fifo_pop_blocking();
+                    bool ok = cal_capture(float_xfer.f);
+                    multicore_fifo_push_blocking(ok ? return_ok : return_failed);
+                    break;
+                }
+                case cmd_cal_remove: {
+                    uint32_t idx = multicore_fifo_pop_blocking();
+                    bool ok = cal_remove(idx);
+                    multicore_fifo_push_blocking(ok ? return_ok : return_failed);
+                    break;
+                }
+                case cmd_cal_reset:
+                    cal_reset_to_defaults();
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                case cmd_cal_save: {
+                    bool ok = cal_save();
+                    multicore_fifo_push_blocking(ok ? return_ok : return_failed);
+                    break;
+                }
+                case cmd_cal_list: {
+                    uint n = cal_num_points();
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking((uint32_t)n);
+                    for (uint i = 0; i < n; i++) {
+                        cal_point_t pt;
+                        cal_get_point(i, &pt);
+                        float_xfer.f = pt.volts;
+                        multicore_fifo_push_blocking(float_xfer.ui32);
+                        float_xfer.f = pt.hz;
+                        multicore_fifo_push_blocking(float_xfer.ui32);
+                    }
+                    multicore_fifo_push_blocking((uint32_t)cal_source());
+                    break;
+                }
             }
         }
 

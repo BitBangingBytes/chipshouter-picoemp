@@ -34,23 +34,3 @@ export PICO_SDK_PATH=.. path to pico SDK ..
 cmake -S . -B build
 cmake --build build
 ```
-
-### Build options
-
-| Option      | Default | Description                                                                 |
-|-------------|---------|-----------------------------------------------------------------------------|
-| `DEBUG_DAC` | `OFF`   | Enables the `dd` / `debug_dac` serial command, which writes a raw 12-bit DAC code (0-4095) directly to the AD7543, bypassing the control-loop ramp. Useful for validating the wire format with arbitrary test patterns. |
-
-Enable an option by passing `-D<NAME>=ON` to the configure step:
-
-```
-cmake -S . -B build -DDEBUG_DAC=ON
-cmake --build build
-```
-
-To switch back to a default build, reconfigure with the option `OFF` (or omit it):
-
-```
-cmake -S . -B build -DDEBUG_DAC=OFF
-cmake --build build
-```

@@ -6,6 +6,7 @@
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "pico/flash.h"
 #include "hardware/watchdog.h"
 
 static char serial_buffer[256];
@@ -407,7 +408,6 @@ bool handle_command(char *command) {
         return true;
     }
 
-#ifdef DEBUG_DAC
     if(strcmp(command, "dd") == 0 || strcmp(command, "debug_dac") == 0) {
         char **unused;
         printf(" raw DAC code (0-4095, hex with 0x or decimal)?\n> ");
@@ -434,7 +434,88 @@ bool handle_command(char *command) {
         }
         return true;
     }
-#endif
+
+    if(strcmp(command, "cap") == 0 || strcmp(command, "cal_capture") == 0) {
+        char **unused;
+        printf(" measured voltage at current PWM (V)?\n> ");
+        read_line();
+        printf("\n");
+        if (serial_buffer[0] == 0) {
+            printf("Cancelled.\n");
+            return true;
+        }
+        float_xfer.f = strtof(serial_buffer, unused);
+        multicore_fifo_push_blocking(cmd_cal_capture);
+        multicore_fifo_push_blocking(float_xfer.ui32);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("Captured cal point at %.2f V.\n", float_xfer.f);
+        else
+            printf("Capture failed (no valid PWM signal, table full, or invalid value).\n");
+        return true;
+    }
+
+    if(strcmp(command, "cls") == 0 || strcmp(command, "cal_list") == 0) {
+        multicore_fifo_push_blocking(cmd_cal_list);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result != return_ok) {
+            printf("Cal list failed!\n");
+            return true;
+        }
+        uint32_t n = multicore_fifo_pop_blocking();
+        printf("Cal points (%u):\n", (unsigned)n);
+        for (uint32_t i = 0; i < n; i++) {
+            float_xfer.ui32 = multicore_fifo_pop_blocking();
+            float volts = float_xfer.f;
+            float_xfer.ui32 = multicore_fifo_pop_blocking();
+            float hz = float_xfer.f;
+            printf("  [%u] %8.2f V -> %10.2f Hz\n", (unsigned)i, volts, hz);
+        }
+        uint32_t src = multicore_fifo_pop_blocking();
+        const char *src_str = (src == 0) ? "defaults" : (src == 1) ? "flash" : "runtime (unsaved)";
+        printf("Source: %s\n", src_str);
+        return true;
+    }
+
+    if(strcmp(command, "crm") == 0 || strcmp(command, "cal_remove") == 0) {
+        char **unused;
+        printf(" index to remove?\n> ");
+        read_line();
+        printf("\n");
+        if (serial_buffer[0] == 0) {
+            printf("Cancelled.\n");
+            return true;
+        }
+        unsigned long idx = strtoul(serial_buffer, unused, 10);
+        multicore_fifo_push_blocking(cmd_cal_remove);
+        multicore_fifo_push_blocking((uint32_t)idx);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("Removed cal point %lu.\n", idx);
+        else
+            printf("Remove failed (index out of range).\n");
+        return true;
+    }
+
+    if(strcmp(command, "csv") == 0 || strcmp(command, "cal_save") == 0) {
+        multicore_fifo_push_blocking(cmd_cal_save);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("Cal saved to flash.\n");
+        else
+            printf("Cal save failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "crd") == 0 || strcmp(command, "cal_default") == 0) {
+        multicore_fifo_push_blocking(cmd_cal_reset);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("Cal reset to compiled defaults (use 'csv' to persist).\n");
+        else
+            printf("Cal reset failed!\n");
+        return true;
+    }
 
     if(strcmp(command, "r") == 0 || strcmp(command, "reset") == 0) {
         watchdog_enable(1, 1);
@@ -446,6 +527,10 @@ bool handle_command(char *command) {
 
 void serial_console() {
     multicore_fifo_drain();
+
+    // Register this core for cooperative flash lockout. Required because Core 0
+    // calls flash_safe_execute() during cal_save and needs us to suspend XIP fetches.
+    flash_safe_execute_core_init();
 
     memset(last_command, 0, sizeof(last_command));
 
@@ -483,9 +568,12 @@ void serial_console() {
             printf("- [ai] actual_current: read current feedback (Hz)\n");
             printf("- [gf] get_faults: show active fault flags\n");
             printf("- [cf] clear_faults: clear sticky fault register\n");
-#ifdef DEBUG_DAC
-            printf("- [dd] debug_dac: write a raw 12-bit DAC code (0-4095), bypassing the ramp\n");
-#endif
+            printf("- [dd] debug_dac: write raw 12-bit DAC code (0-4095); pauses closed loop if HV is on\n");
+            printf("- [cap] cal_capture: record current PWM as a cal point at user-measured volts\n");
+            printf("- [cls] cal_list: show current PWM->volts cal table and its source\n");
+            printf("- [crm] cal_remove: remove a cal point by index\n");
+            printf("- [csv] cal_save: persist current cal to flash\n");
+            printf("- [crd] cal_default: reset cal to compiled defaults (use csv to persist)\n");
         }
         printf("\n");
         
