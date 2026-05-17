@@ -34,10 +34,11 @@
 #define T_CLK_LOW_US        39u   // → 43 µs
 #define T_CLK_HIGH_HOLD_US  38u   // → 42 µs (data hold after rising edge)
 #define T_CLK_HIGH_SETUP_US 38u   // → 42 µs (next data setup before falling edge)
+#define T_PRE_STROBE_US     80u   // → 84 µs (extra hold before STR; doubles post-CLK gap to 168 µs)
 #define T_STROBE_US         36u   // → 40 µs (STR HIGH hold after latch edge)
 #define T_IDLE_US            0u   // →  4 µs trailing idle
 
-// Maximum words: 1 (preamble) + 12 bits × 3 words + 2 (strobe + idle) = 39 → round to 40
+// Maximum words: 1 (preamble) + 12 bits × 3 words + 3 (pre-strobe + strobe + idle) = 40
 #define SEQ_MAX_WORDS 40u
 
 static uint pio_offset;
@@ -97,6 +98,8 @@ static uint build_sequence(uint32_t *buf, uint16_t value) {
         buf[n++] = word(PIN_CLK | next_dat, T_CLK_HIGH_SETUP_US);
     }
 
+    // Pre-strobe: hold CLK/DAT idle, STR LOW for extra 84 µs before asserting STR.
+    buf[n++] = word(ENGAGED_IDLE_PINS, T_PRE_STROBE_US);
     // Strobe pulse: STR rising edge (LOW→HIGH) latches data; hold HIGH 40 µs.
     buf[n++] = word(DESELECT_PINS, T_STROBE_US);
     // Drop STR back LOW — chip remains engaged for the next write.
