@@ -6,7 +6,6 @@
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
-#include "pico/flash.h"
 #include "hardware/watchdog.h"
 
 static char serial_buffer[256];
@@ -527,10 +526,6 @@ bool handle_command(char *command) {
 
 void serial_console() {
     multicore_fifo_drain();
-
-    // Register this core for cooperative flash lockout. Required because Core 0
-    // calls flash_safe_execute() during cal_save and needs us to suspend XIP fetches.
-    flash_safe_execute_core_init();
 
     memset(last_command, 0, sizeof(last_command));
 

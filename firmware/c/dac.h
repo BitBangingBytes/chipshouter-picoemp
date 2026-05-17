@@ -14,3 +14,7 @@ void dac_write(uint16_t value);
 
 // Returns true when the previous DMA transfer has completed.
 bool dac_write_done();
+
+// Drive STR HIGH (chip deselected). Used when HV is disabled. Blocks until
+// the previous DMA transfer (if any) drains, then pushes a single PIO word.
+void dac_deselect();

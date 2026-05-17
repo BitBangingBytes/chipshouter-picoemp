@@ -74,6 +74,9 @@ static void shutdown_output() {
     set_dac_safe(0);
     current_dac = 0;
     gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled
+    // HV is off — drive STR HIGH so the DAC chip is deselected. Blocks until
+    // the in-flight DAC=0 write drains, then pushes a single deselect word.
+    dac_deselect();
 }
 
 static void check_faults() {

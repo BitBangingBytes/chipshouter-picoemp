@@ -2,7 +2,7 @@
 #include "psu_monitor.h"
 
 #include "hardware/flash.h"
-#include "pico/flash.h"
+#include "hardware/sync.h"
 
 #include <string.h>
 
@@ -141,15 +141,27 @@ cal_src_t cal_source(void) { return s_source; }
 // ---------------------------------------------------------------------------
 // Flash save (Core 0)
 // ---------------------------------------------------------------------------
+//
+// We deliberately do NOT use flash_safe_execute() here. That API requires
+// flash_safe_execute_core_init() to be called on the other (non-flashing) core,
+// which installs an SIO IRQ handler that drains the inter-core FIFO looking
+// for a lockout sentinel — and silently discards any other words. That breaks
+// the normal Core 1 → Core 0 command/ack handshake used by every serial
+// command. Instead we disable interrupts on Core 0 and run the flash ops from
+// a function placed in RAM (__not_in_flash_func) so XIP being torn down
+// mid-operation doesn't stall the calling function. Core 1 may briefly stall
+// if it tries to fetch a flash instruction during the ~tens of ms erase+program
+// window, but it recovers automatically when XIP is re-enabled.
 
 static cal_blob_t s_pending_blob;  // built before flash op, lives in BSS
 
-static void cal_flash_write_op(void *param) {
-    (void)param;
+static void __not_in_flash_func(cal_do_flash_write)(void) {
+    uint32_t ints = save_and_disable_interrupts();
     flash_range_erase(CAL_FLASH_OFFSET, FLASH_SECTOR_SIZE);
     flash_range_program(CAL_FLASH_OFFSET,
                         (const uint8_t *)&s_pending_blob,
                         sizeof(s_pending_blob));
+    restore_interrupts(ints);
 }
 
 bool cal_save(void) {
@@ -159,8 +171,7 @@ bool cal_save(void) {
     s_pending_blob.n_points = s_n_points;
     memcpy(s_pending_blob.points, s_points, s_n_points * sizeof(cal_point_t));
 
-    int rc = flash_safe_execute(cal_flash_write_op, NULL, 250 /* ms timeout */);
-    if (rc != PICO_OK) return false;
+    cal_do_flash_write();
 
     s_source = CAL_SRC_FLASH;
     return true;

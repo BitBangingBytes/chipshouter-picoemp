@@ -23,7 +23,7 @@ target_sources(picoemp PRIVATE
         control_loop.c
         )
 
-target_link_libraries(picoemp PRIVATE pico_stdlib hardware_pwm hardware_pio hardware_dma hardware_flash pico_flash pico_multicore m)
+target_link_libraries(picoemp PRIVATE pico_stdlib hardware_pwm hardware_pio hardware_dma hardware_flash pico_multicore m)
 pico_add_extra_outputs(picoemp)
 
 # enable usb output, disable uart output
