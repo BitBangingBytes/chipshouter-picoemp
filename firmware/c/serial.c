@@ -257,15 +257,14 @@ bool handle_command(char *command) {
         uint32_t result = multicore_fifo_pop_blocking();
         if(result == return_ok) {
             uint32_t period_ns = multicore_fifo_pop_blocking();
+            float_xfer.ui32 = multicore_fifo_pop_blocking();
+            float volts = float_xfer.f;
             if(period_ns == 0) {
                 printf("Voltage PWM: No signal\n");
             } else {
                 float hz = 1000000000.0f / (float)period_ns;
-                // TODO: replace with calibrated lookup table once bench measurements are taken
-                // Preliminary linear estimate: ~12.4 Hz/V across 20V-3000V range
-                float volts_est = hz / 12.4f;
-                printf("Voltage PWM: period=%uns  freq=%.2fHz  ~%.1fV (est, uncalibrated)\n",
-                       period_ns, hz, volts_est);
+                printf("Voltage PWM: period=%uns  freq=%.2fHz  %.1fV (cal table)\n",
+                       period_ns, hz, volts);
             }
         } else {
             printf("Read voltage failed!\n");
@@ -404,6 +403,41 @@ bool handle_command(char *command) {
             printf("Faults cleared.\n");
         else
             printf("Clear faults failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "sdr") == 0 || strcmp(command, "set_dac_refresh") == 0) {
+        char **unused;
+        printf(" DAC refresh interval in ms (0 = disable, default: 500)?\n> ");
+        read_line();
+        printf("\n");
+        if (serial_buffer[0] == 0) {
+            printf("Cancelled.\n");
+            return true;
+        }
+        uint32_t ms = (uint32_t)strtoul(serial_buffer, unused, 10);
+        multicore_fifo_push_blocking(cmd_set_dac_refresh);
+        multicore_fifo_push_blocking(ms);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if (result == return_ok)
+            printf("DAC refresh interval set to %u ms%s\n", ms, ms == 0 ? " (disabled)" : "");
+        else
+            printf("Set DAC refresh failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "gdr") == 0 || strcmp(command, "get_dac_refresh") == 0) {
+        multicore_fifo_push_blocking(cmd_get_dac_refresh);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if (result == return_ok) {
+            uint32_t ms = multicore_fifo_pop_blocking();
+            if (ms == 0)
+                printf("DAC refresh: disabled\n");
+            else
+                printf("DAC refresh: %u ms\n", ms);
+        } else {
+            printf("Get DAC refresh failed!\n");
+        }
         return true;
     }
 
@@ -553,7 +587,7 @@ void serial_console() {
             printf("- [t]oggle_gp1\n");
             printf("- [s]tatus\n");
             printf("- [r]eset\n");
-            printf("- [rv] read_voltage: raw PWM period, Hz, estimated volts\n");
+            printf("- [rv] read_voltage: raw PWM period, Hz, and cal-table volts\n");
             printf("- [ri] read_current: raw PWM period, Hz\n");
             printf("- [hve] hv_enable: enable HV output / control loop\n");
             printf("- [hvd] hv_disable: disable HV output / control loop\n");
@@ -564,6 +598,8 @@ void serial_console() {
             printf("- [gf] get_faults: show active fault flags\n");
             printf("- [cf] clear_faults: clear sticky fault register\n");
             printf("- [dd] debug_dac: write raw 12-bit DAC code (0-4095); pauses closed loop if HV is on\n");
+            printf("- [sdr] set_dac_refresh: set periodic DAC resend interval in ms (0 = disable)\n");
+            printf("- [gdr] get_dac_refresh: show current DAC refresh interval\n");
             printf("- [cap] cal_capture: record current PWM as a cal point at user-measured volts\n");
             printf("- [cls] cal_list: show current PWM->volts cal table and its source\n");
             printf("- [crm] cal_remove: remove a cal point by index\n");

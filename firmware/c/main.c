@@ -175,12 +175,17 @@ int main() {
                     gpio_xor_mask(1<<1);
                     multicore_fifo_push_blocking(return_ok);
                     break;
-                case cmd_read_voltage_pwm:
+                case cmd_read_voltage_pwm: {
+                    uint32_t period_ns = psu_monitor_voltage_is_valid()
+                        ? psu_monitor_get_voltage_period_ns() : 0;
                     multicore_fifo_push_blocking(return_ok);
-                    multicore_fifo_push_blocking(
-                        psu_monitor_voltage_is_valid() ? psu_monitor_get_voltage_period_ns() : 0
-                    );
+                    multicore_fifo_push_blocking(period_ns);
+                    // Also push the cal-table-derived volts so Core 1 doesn't
+                    // re-implement the conversion with stale constants.
+                    float_xfer.f = cal_period_ns_to_volts(period_ns);
+                    multicore_fifo_push_blocking(float_xfer.ui32);
                     break;
+                }
                 case cmd_read_current_pwm:
                     multicore_fifo_push_blocking(return_ok);
                     multicore_fifo_push_blocking(
@@ -254,6 +259,16 @@ int main() {
                     multicore_fifo_push_blocking(ok ? return_ok : return_failed);
                     break;
                 }
+                case cmd_set_dac_refresh: {
+                    uint32_t ms = multicore_fifo_pop_blocking();
+                    control_loop_set_dac_refresh_ms(ms);
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                }
+                case cmd_get_dac_refresh:
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking(control_loop_get_dac_refresh_ms());
+                    break;
                 case cmd_cal_list: {
                     uint n = cal_num_points();
                     multicore_fifo_push_blocking(return_ok);

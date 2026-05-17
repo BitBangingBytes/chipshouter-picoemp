@@ -31,6 +31,11 @@
 // high voltages a fresh PWM average can arrive every few ms and the loop hunts.
 #define MIN_ADJUST_DWELL_US 60000u   // 60 ms
 
+// Periodic DAC refresh: resend current code unconditionally at this interval
+// even when the control loop is in deadband. Keeps the DAC consistent after
+// noise glitches on the SPI bus. 0 disables the refresh.
+#define DAC_REFRESH_INTERVAL_MS_DEFAULT 500u
+
 // Current: rough conversion — placeholder (period_ns → amps not yet calibrated).
 // Returns Hz for now; replace with calibrated formula.
 static float period_ns_to_current(uint32_t period_ns) {
@@ -53,6 +58,8 @@ static uint32_t last_processed_seq = 0;  // last voltage-PWM sample_seq we acted
 static bool     shutdown_latched   = false; // true while fault shutdown_output has already run
 static uint64_t last_adjust_us     = 0;     // wall time of last DAC adjustment (for MIN_ADJUST_DWELL_US)
 static bool     manual_mode        = false; // closed-loop paused for raw DAC writes
+static uint32_t dac_refresh_interval_ms = DAC_REFRESH_INTERVAL_MS_DEFAULT;
+static uint64_t last_dac_refresh_us     = 0;
 
 // LED flash state machine
 static uint64_t led_next_us     = 0;
@@ -100,8 +107,10 @@ void control_loop_init() {
     cl_enabled         = false;
     last_processed_seq = 0;
     shutdown_latched   = false;
-    last_adjust_us     = 0;
-    manual_mode        = false;
+    last_adjust_us          = 0;
+    manual_mode             = false;
+    dac_refresh_interval_ms = DAC_REFRESH_INTERVAL_MS_DEFAULT;
+    last_dac_refresh_us     = 0;
     gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled at startup
 }
 
@@ -129,6 +138,16 @@ void control_loop_tick() {
     // Manual DAC mode (entered by raw `dd` while HV enabled): keep feedback /
     // fault paths alive but stop driving the DAC ourselves.
     if (manual_mode) return;
+
+    // Periodic DAC refresh — resend the current code unconditionally at the
+    // configured interval so transient SPI noise can't leave the DAC in a
+    // wrong state. Runs independently of the closed-loop adjustment path.
+    uint64_t now_refresh = time_us_64();
+    if (dac_refresh_interval_ms > 0 &&
+        (now_refresh - last_dac_refresh_us) >= (uint64_t)dac_refresh_interval_ms * 1000u) {
+        last_dac_refresh_us = now_refresh;
+        set_dac_safe(current_dac);
+    }
 
     // Gate the DAC adjustment on a freshly completed PWM average.
     uint32_t seq = psu_monitor_voltage_sample_seq();
@@ -253,3 +272,6 @@ void control_loop_clear_faults() {
 
 void control_loop_set_manual_mode(bool en) { manual_mode = en; }
 bool control_loop_in_manual_mode()         { return manual_mode; }
+
+void control_loop_set_dac_refresh_ms(uint32_t ms) { dac_refresh_interval_ms = ms; }
+uint32_t control_loop_get_dac_refresh_ms()         { return dac_refresh_interval_ms; }

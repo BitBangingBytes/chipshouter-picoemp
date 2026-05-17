@@ -42,6 +42,10 @@
 // pushes volts (ui32 float bits) and hz (ui32 float bits), then source enum.
 #define cmd_cal_list    29
 
+// cmd word + uint32 interval_ms follows (0 = disable).
+#define cmd_set_dac_refresh 30
+#define cmd_get_dac_refresh 31
+
 #define return_ok 0
 #define return_failed 1
 

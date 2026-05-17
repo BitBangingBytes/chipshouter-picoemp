@@ -47,3 +47,7 @@ void control_loop_clear_faults();
 // and checks faults. Cleared on every control_loop_enable() transition.
 void control_loop_set_manual_mode(bool en);
 bool control_loop_in_manual_mode();
+
+// Periodic DAC refresh interval. Set to 0 to disable.
+void control_loop_set_dac_refresh_ms(uint32_t ms);
+uint32_t control_loop_get_dac_refresh_ms();
