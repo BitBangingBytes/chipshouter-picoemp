@@ -14,14 +14,14 @@
 // ---------------------------------------------------------------------------
 
 // Max DAC counts to change per control tick to limit slew rate.
-#define RAMP_STEP_MAX    100u
+#define RAMP_STEP_MAX    50u
 
 // Error deadband in volts — don't adjust DAC if within this window.
-#define DEADBAND_VOLTS   1.0f
+#define DEADBAND_VOLTS   0.7f
 
 // Proportional gain: DAC counts per volt of error.
 // Roughly the slope of the V→DAC characteristic (~2-2.8 codes/V across range).
-#define KP_DAC_PER_VOLT  1.5f
+#define KP_DAC_PER_VOLT  0.8f
 
 // Starting DAC code on enable; closed-loop ramps from here toward setpoint.
 #define INITIAL_DAC_CODE 10u
@@ -60,9 +60,9 @@ static bool     led_state       = false;
 static uint32_t led_flash_count = 0;  // flashes remaining in current burst
 static uint64_t led_pause_until = 0;
 
-#define LED_ON_US    100000u   // 100 ms on
-#define LED_OFF_US    80000u   // 80 ms between flashes
-#define LED_PAUSE_US 600000u   // 600 ms between bursts
+#define LED_ON_US    150000u   // 150 ms on
+#define LED_OFF_US   100000u   // 100 ms between flashes
+#define LED_PAUSE_US 1000000u  // 1000 ms between bursts
 
 static void set_dac_safe(uint16_t code) {
     if (!dac_write_done()) return;  // previous write still in flight
