@@ -12,7 +12,7 @@ void psu_monitor_init();
 // Must be called from Core 0 main loop to drain PIO FIFOs and update averages.
 void psu_monitor_update();
 
-// Period in nanoseconds (32 ns resolution). Returns 0 if not yet measured.
+// Period in nanoseconds (24 ns resolution). Returns 0 if not yet measured.
 uint32_t psu_monitor_get_voltage_period_ns();
 uint32_t psu_monitor_get_current_period_ns();
 

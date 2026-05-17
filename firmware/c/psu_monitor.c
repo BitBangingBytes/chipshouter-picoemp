@@ -38,7 +38,8 @@ void psu_monitor_init() {
 }
 
 // Each raw FIFO value = 0xFFFFFFFF - N_loops.
-// period_ns = 32 * N_loops  (4 cycles per loop * 8 ns/cycle, doubled for 50% duty).
+// period_ns = 24 * N_loops  (3 PIO cycles per loop * 8 ns/cycle at 125 MHz sys_clk;
+//                            measures full rise-to-rise period, no duty assumption).
 // Computed from accumulated sum to preserve sub-loop precision across averages.
 static uint32_t acc_to_period_ns(uint64_t acc, uint32_t n) {
     return (uint32_t)((24ULL * acc) / n);
