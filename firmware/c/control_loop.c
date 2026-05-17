@@ -29,7 +29,7 @@
 // Minimum wall-clock time between DAC adjustments. Floors the update rate so
 // the PSU has time to respond before the next correction — without this, at
 // high voltages a fresh PWM average can arrive every few ms and the loop hunts.
-#define MIN_ADJUST_DWELL_US 250000u   // 250 ms
+#define MIN_ADJUST_DWELL_US 60000u   // 60 ms
 
 // Current: rough conversion — placeholder (period_ns → amps not yet calibrated).
 // Returns Hz for now; replace with calibrated formula.
