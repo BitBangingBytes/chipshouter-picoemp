@@ -14,14 +14,14 @@
 // ---------------------------------------------------------------------------
 
 // Max DAC counts to change per control tick to limit slew rate.
-#define RAMP_STEP_MAX    50u
+#define RAMP_STEP_MAX    25u
 
 // Error deadband in volts — don't adjust DAC if within this window.
-#define DEADBAND_VOLTS   0.7f
+#define DEADBAND_VOLTS   1.5f
 
 // Proportional gain: DAC counts per volt of error.
 // Roughly the slope of the V→DAC characteristic (~2-2.8 codes/V across range).
-#define KP_DAC_PER_VOLT  0.8f
+#define KP_DAC_PER_VOLT  0.7f
 
 // Starting DAC code on enable; closed-loop ramps from here toward setpoint.
 #define INITIAL_DAC_CODE 10u
