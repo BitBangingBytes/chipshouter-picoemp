@@ -71,6 +71,10 @@ void print_status(uint32_t status) {
     } else {
         printf("- HVP external\n");
     }
+    bool faults_ignored = (status >> 4) & 1;
+    if(faults_ignored) {
+        printf("- Fault ignore ON (faults recorded but do not shut down)\n");
+    }
 }
 
 bool handle_command(char *command) {
@@ -406,6 +410,28 @@ bool handle_command(char *command) {
         return true;
     }
 
+    if(strcmp(command, "fi") == 0 || strcmp(command, "fault_ignore") == 0) {
+        multicore_fifo_push_blocking(cmd_set_fault_ignore);
+        multicore_fifo_push_blocking(1u);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("Fault ignore enabled. Faults will be recorded but will not shut down.\n");
+        else
+            printf("Failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "fn") == 0 || strcmp(command, "fault_normal") == 0) {
+        multicore_fifo_push_blocking(cmd_set_fault_ignore);
+        multicore_fifo_push_blocking(0u);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok)
+            printf("Fault ignore disabled. Faults will trigger shutdown.\n");
+        else
+            printf("Failed!\n");
+        return true;
+    }
+
     if(strcmp(command, "sdr") == 0 || strcmp(command, "set_dac_refresh") == 0) {
         char **unused;
         printf(" DAC refresh interval in ms (0 = disable, default: 500)?\n> ");
@@ -597,6 +623,8 @@ void serial_console() {
             printf("- [ai] actual_current: read current feedback (Hz)\n");
             printf("- [gf] get_faults: show active fault flags\n");
             printf("- [cf] clear_faults: clear sticky fault register\n");
+            printf("- [fi] fault_ignore: record faults but suppress shutdown\n");
+            printf("- [fn] fault_normal: restore normal fault shutdown behavior\n");
             printf("- [dd] debug_dac: write raw 12-bit DAC code (0-4095); pauses closed loop if HV is on\n");
             printf("- [sdr] set_dac_refresh: set periodic DAC resend interval in ms (0 = disable)\n");
             printf("- [gdr] get_dac_refresh: show current DAC refresh interval\n");

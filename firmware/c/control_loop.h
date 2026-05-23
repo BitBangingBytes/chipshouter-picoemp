@@ -51,3 +51,8 @@ bool control_loop_in_manual_mode();
 // Periodic DAC refresh interval. Set to 0 to disable.
 void control_loop_set_dac_refresh_ms(uint32_t ms);
 uint32_t control_loop_get_dac_refresh_ms();
+
+// Fault ignore mode. When enabled, faults are still recorded (readable via
+// get_faults) but do not trigger a shutdown. Use with caution.
+void control_loop_set_faults_ignored(bool en);
+bool control_loop_get_faults_ignored();

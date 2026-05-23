@@ -46,6 +46,10 @@
 #define cmd_set_dac_refresh 30
 #define cmd_get_dac_refresh 31
 
+// cmd word + uint32 (0/1) follows.
+#define cmd_set_fault_ignore 32
+#define cmd_get_fault_ignore 33
+
 #define return_ok 0
 #define return_failed 1
 

@@ -58,6 +58,7 @@ static uint32_t last_processed_seq = 0;  // last voltage-PWM sample_seq we acted
 static bool     shutdown_latched   = false; // true while fault shutdown_output has already run
 static uint64_t last_adjust_us     = 0;     // wall time of last DAC adjustment (for MIN_ADJUST_DWELL_US)
 static bool     manual_mode        = false; // closed-loop paused for raw DAC writes
+static bool     faults_ignored     = false; // when true, faults are recorded but don't trigger shutdown
 static uint32_t dac_refresh_interval_ms = DAC_REFRESH_INTERVAL_MS_DEFAULT;
 static uint64_t last_dac_refresh_us     = 0;
 
@@ -109,6 +110,7 @@ void control_loop_init() {
     shutdown_latched   = false;
     last_adjust_us          = 0;
     manual_mode             = false;
+    faults_ignored          = false;
     dac_refresh_interval_ms = DAC_REFRESH_INTERVAL_MS_DEFAULT;
     last_dac_refresh_us     = 0;
     gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled at startup
@@ -124,7 +126,7 @@ void control_loop_tick() {
 
     check_faults();
 
-    if (fault_reg != 0) {
+    if (fault_reg != 0 && !faults_ignored) {
         // Latch the shutdown so we don't keep firing DAC writes (CLK/STR pulses)
         // every main-loop iteration while the fault persists.
         if (!shutdown_latched) {
@@ -275,3 +277,6 @@ bool control_loop_in_manual_mode()         { return manual_mode; }
 
 void control_loop_set_dac_refresh_ms(uint32_t ms) { dac_refresh_interval_ms = ms; }
 uint32_t control_loop_get_dac_refresh_ms()         { return dac_refresh_interval_ms; }
+
+void control_loop_set_faults_ignored(bool en) { faults_ignored = en; }
+bool control_loop_get_faults_ignored()         { return faults_ignored; }

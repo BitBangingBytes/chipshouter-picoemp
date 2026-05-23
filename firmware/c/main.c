@@ -53,6 +53,9 @@ uint32_t get_status() {
     if(hvp_internal) {
         result |= 0b1000;
     }
+    if(control_loop_get_faults_ignored()) {
+        result |= 0b10000;
+    }
     return result;
 }
 
@@ -259,6 +262,14 @@ int main() {
                     multicore_fifo_push_blocking(ok ? return_ok : return_failed);
                     break;
                 }
+                case cmd_set_fault_ignore:
+                    control_loop_set_faults_ignored((bool)multicore_fifo_pop_blocking());
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                case cmd_get_fault_ignore:
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking((uint32_t)control_loop_get_faults_ignored());
+                    break;
                 case cmd_set_dac_refresh: {
                     uint32_t ms = multicore_fifo_pop_blocking();
                     control_loop_set_dac_refresh_ms(ms);
