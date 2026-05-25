@@ -44,6 +44,7 @@ float control_loop_get_actual_current();
 
 // Current DAC code being driven.
 uint16_t control_loop_get_current_dac();
+void     control_loop_set_current_dac(uint16_t code);
 
 // Fault register — sticky bits cleared only by control_loop_clear_faults().
 uint32_t control_loop_get_faults();

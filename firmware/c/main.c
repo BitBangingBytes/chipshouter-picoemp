@@ -233,10 +233,13 @@ int main() {
                     break;
                 case cmd_debug_dac_raw: {
                     uint32_t raw = multicore_fifo_pop_blocking();
+                    uint16_t code = (uint16_t)(raw & 0x0FFFu);
                     // Wait for any in-flight DMA to drain before issuing a new write.
                     while (!dac_write_done()) tight_loop_contents();
-                    dac_write((uint16_t)(raw & 0x0FFFu));
-                    // If HV is enabled, pause the closed loop so it doesn't fight us.
+                    dac_write(code);
+                    // Keep current_dac in sync so cap captures the correct DAC value.
+                    control_loop_set_current_dac(code);
+                    // If HV is enabled, pause the open-loop ramp so it doesn't fight us.
                     if (control_loop_is_enabled()) control_loop_set_manual_mode(true);
                     multicore_fifo_push_blocking(return_ok);
                     break;

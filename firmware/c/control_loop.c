@@ -242,7 +242,8 @@ float control_loop_get_soft_limit() { return soft_limit; }
 
 float control_loop_get_actual_volts()   { return actual_volts; }
 float control_loop_get_actual_current() { return actual_current; }
-uint16_t control_loop_get_current_dac() { return current_dac; }
+uint16_t control_loop_get_current_dac()          { return current_dac; }
+void     control_loop_set_current_dac(uint16_t code) { current_dac = code; }
 
 uint32_t control_loop_get_faults() { return fault_reg; }
 
