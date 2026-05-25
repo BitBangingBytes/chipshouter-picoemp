@@ -79,7 +79,7 @@ int main() {
                     break;
                 case cmd_set_soft_limit:
                     float_xfer.ui32 = multicore_fifo_pop_blocking();
-                    control_loop_set_soft_limit(float_xfer.f);
+                    cal_set_soft_limit(float_xfer.f);
                     multicore_fifo_push_blocking(return_ok);
                     break;
                 case cmd_debug_dac_raw: {
@@ -178,13 +178,23 @@ int main() {
                     multicore_fifo_push_blocking(float_xfer.ui32);
                     break;
                 case cmd_get_soft_limit:
-                    float_xfer.f = control_loop_get_soft_limit();
+                    float_xfer.f = cal_get_soft_limit();
                     multicore_fifo_push_blocking(return_ok);
                     multicore_fifo_push_blocking(float_xfer.ui32);
                     break;
                 case cmd_get_manual_mode:
                     multicore_fifo_push_blocking(return_ok);
                     multicore_fifo_push_blocking((uint32_t)control_loop_in_manual_mode());
+                    break;
+                case cmd_set_hard_limit:
+                    float_xfer.ui32 = multicore_fifo_pop_blocking();
+                    cal_set_hard_limit(float_xfer.f);
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                case cmd_get_hard_limit:
+                    float_xfer.f = cal_get_hard_limit();
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking(float_xfer.ui32);
                     break;
             }
         }

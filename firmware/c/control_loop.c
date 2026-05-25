@@ -31,7 +31,6 @@ static float period_ns_to_current(uint32_t period_ns) {
 
 static bool     cl_enabled         = false;
 static float    target_volts       = 0.0f;
-static float    soft_limit         = HARD_LIMIT_VOLTS;
 static uint16_t current_dac        = 0;
 static float    actual_volts       = 0.0f;
 static float    actual_current     = 0.0f;
@@ -75,8 +74,7 @@ static void check_faults() {
     if (gpio_get(PIN_IN_Circuit_Shorted)) fault_reg |= FAULT_CIRCUIT_SHORTED;
     if (gpio_get(PIN_IN_Circuit_UNKNOWN)) fault_reg |= FAULT_CIRCUIT_UNKNOWN;
 
-    float hard_ceil = (HARD_LIMIT_VOLTS < soft_limit) ? HARD_LIMIT_VOLTS : soft_limit;
-    if (actual_volts > hard_ceil) fault_reg |= FAULT_OVERVOLTAGE;
+    if (actual_volts > cal_get_hard_limit()) fault_reg |= FAULT_OVERVOLTAGE;
 }
 
 // ---------------------------------------------------------------------------
@@ -86,7 +84,6 @@ static void check_faults() {
 void control_loop_init() {
     current_dac             = 0;
     target_volts            = 0.0f;
-    soft_limit              = HARD_LIMIT_VOLTS;
     fault_reg               = 0;
     cl_enabled              = false;
     shutdown_latched        = false;
@@ -216,9 +213,8 @@ void control_loop_enable(bool en) {
 bool control_loop_is_enabled() { return cl_enabled; }
 
 void control_loop_set_target_volts(float volts) {
-    float ceiling = (HARD_LIMIT_VOLTS < soft_limit) ? HARD_LIMIT_VOLTS : soft_limit;
-    if (volts < 0.0f)    volts = 0.0f;
-    if (volts > ceiling) volts = ceiling;
+    if (volts < 0.0f)                  volts = 0.0f;
+    if (volts > cal_get_hard_limit())  volts = cal_get_hard_limit();
     target_volts = volts;
 
     // Capture ramp origin so the parabolic profile starts from current position.
@@ -230,15 +226,6 @@ void control_loop_set_target_volts(float volts) {
 }
 
 float control_loop_get_target_volts() { return target_volts; }
-
-void control_loop_set_soft_limit(float volts) {
-    if (volts > HARD_LIMIT_VOLTS) volts = HARD_LIMIT_VOLTS;
-    if (volts < 0.0f) volts = 0.0f;
-    soft_limit = volts;
-    if (target_volts > soft_limit) target_volts = soft_limit;
-}
-
-float control_loop_get_soft_limit() { return soft_limit; }
 
 float control_loop_get_actual_volts()   { return actual_volts; }
 float control_loop_get_actual_current() { return actual_current; }

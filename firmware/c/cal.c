@@ -14,7 +14,7 @@
 #define CAL_FLASH_ADDR    ((const uint8_t *)(XIP_BASE + CAL_FLASH_OFFSET))
 
 #define CAL_MAGIC    0x4C414350u   // 'PCAL'
-#define CAL_VERSION  2u
+#define CAL_VERSION  3u
 
 typedef struct {
     uint32_t     magic;
@@ -26,6 +26,9 @@ typedef struct {
     uint16_t     ramp_step_max;
     uint16_t     ramp_step_min;
     uint32_t     ramp_tick_ms;
+    // v3: soft and hard voltage limits
+    float        soft_limit_volts;
+    float        hard_limit_volts;
 } cal_blob_t;
 
 _Static_assert(sizeof(cal_blob_t) <= FLASH_SECTOR_SIZE,
@@ -45,9 +48,12 @@ static const cal_point_t DEFAULT_POINTS[] = {
 };
 #define DEFAULT_POINTS_N  (sizeof(DEFAULT_POINTS) / sizeof(DEFAULT_POINTS[0]))
 
-#define DEFAULT_RAMP_STEP_MAX 100u
-#define DEFAULT_RAMP_STEP_MIN   1u
-#define DEFAULT_RAMP_TICK_MS   20u
+#define DEFAULT_RAMP_STEP_MAX    100u
+#define DEFAULT_RAMP_STEP_MIN      1u
+#define DEFAULT_RAMP_TICK_MS      20u
+#define DEFAULT_SOFT_LIMIT_VOLTS  1500.0f
+#define DEFAULT_HARD_LIMIT_VOLTS  1500.0f
+#define ABSOLUTE_MAX_VOLTS        1500.0f
 
 // ---------------------------------------------------------------------------
 // Live state in RAM
@@ -57,9 +63,11 @@ static cal_point_t s_points[CAL_MAX_POINTS];
 static uint        s_n_points = 0;
 static cal_src_t   s_source   = CAL_SRC_DEFAULTS;
 
-static uint16_t s_ramp_step_max = DEFAULT_RAMP_STEP_MAX;
-static uint16_t s_ramp_step_min = DEFAULT_RAMP_STEP_MIN;
-static uint32_t s_ramp_tick_ms  = DEFAULT_RAMP_TICK_MS;
+static uint16_t s_ramp_step_max   = DEFAULT_RAMP_STEP_MAX;
+static uint16_t s_ramp_step_min   = DEFAULT_RAMP_STEP_MIN;
+static uint32_t s_ramp_tick_ms    = DEFAULT_RAMP_TICK_MS;
+static float    s_soft_limit_volts = DEFAULT_SOFT_LIMIT_VOLTS;
+static float    s_hard_limit_volts = DEFAULT_HARD_LIMIT_VOLTS;
 
 #define VOLTS_EPSILON  0.05f
 
@@ -68,9 +76,11 @@ static uint32_t s_ramp_tick_ms  = DEFAULT_RAMP_TICK_MS;
 void cal_reset_to_defaults(void) {
     s_n_points = DEFAULT_POINTS_N;
     memcpy(s_points, DEFAULT_POINTS, sizeof(DEFAULT_POINTS));
-    s_ramp_step_max = DEFAULT_RAMP_STEP_MAX;
-    s_ramp_step_min = DEFAULT_RAMP_STEP_MIN;
-    s_ramp_tick_ms  = DEFAULT_RAMP_TICK_MS;
+    s_ramp_step_max    = DEFAULT_RAMP_STEP_MAX;
+    s_ramp_step_min    = DEFAULT_RAMP_STEP_MIN;
+    s_ramp_tick_ms     = DEFAULT_RAMP_TICK_MS;
+    s_soft_limit_volts = DEFAULT_SOFT_LIMIT_VOLTS;
+    s_hard_limit_volts = DEFAULT_HARD_LIMIT_VOLTS;
     s_source = CAL_SRC_DEFAULTS;
 }
 
@@ -82,9 +92,11 @@ void cal_init(void) {
         && blob->n_points <= CAL_MAX_POINTS) {
         s_n_points = blob->n_points;
         memcpy(s_points, blob->points, s_n_points * sizeof(cal_point_t));
-        s_ramp_step_max = blob->ramp_step_max;
-        s_ramp_step_min = blob->ramp_step_min;
-        s_ramp_tick_ms  = blob->ramp_tick_ms;
+        s_ramp_step_max    = blob->ramp_step_max;
+        s_ramp_step_min    = blob->ramp_step_min;
+        s_ramp_tick_ms     = blob->ramp_tick_ms;
+        s_soft_limit_volts = blob->soft_limit_volts;
+        s_hard_limit_volts = blob->hard_limit_volts;
         s_source = CAL_SRC_FLASH;
     } else {
         cal_reset_to_defaults();
@@ -184,6 +196,26 @@ void cal_set_ramp(uint16_t step_max, uint16_t step_min, uint32_t tick_ms) {
     s_source = CAL_SRC_RUNTIME;
 }
 
+float cal_get_soft_limit(void) { return s_soft_limit_volts; }
+
+void cal_set_soft_limit(float volts) {
+    if (volts < 0.0f)               volts = 0.0f;
+    if (volts > s_hard_limit_volts) volts = s_hard_limit_volts;
+    s_soft_limit_volts = volts;
+    s_source = CAL_SRC_RUNTIME;
+}
+
+float cal_get_hard_limit(void) { return s_hard_limit_volts; }
+
+void cal_set_hard_limit(float volts) {
+    if (volts < 0.0f)              volts = 0.0f;
+    if (volts > ABSOLUTE_MAX_VOLTS) volts = ABSOLUTE_MAX_VOLTS;
+    s_hard_limit_volts = volts;
+    // Clamp soft limit if it now exceeds hard limit.
+    if (s_soft_limit_volts > s_hard_limit_volts) s_soft_limit_volts = s_hard_limit_volts;
+    s_source = CAL_SRC_RUNTIME;
+}
+
 // ---------------------------------------------------------------------------
 // Flash save (Core 0)
 // ---------------------------------------------------------------------------
@@ -204,9 +236,11 @@ bool cal_save(void) {
     s_pending_blob.magic         = CAL_MAGIC;
     s_pending_blob.version       = CAL_VERSION;
     s_pending_blob.n_points      = s_n_points;
-    s_pending_blob.ramp_step_max = s_ramp_step_max;
-    s_pending_blob.ramp_step_min = s_ramp_step_min;
-    s_pending_blob.ramp_tick_ms  = s_ramp_tick_ms;
+    s_pending_blob.ramp_step_max    = s_ramp_step_max;
+    s_pending_blob.ramp_step_min    = s_ramp_step_min;
+    s_pending_blob.ramp_tick_ms     = s_ramp_tick_ms;
+    s_pending_blob.soft_limit_volts = s_soft_limit_volts;
+    s_pending_blob.hard_limit_volts = s_hard_limit_volts;
     memcpy(s_pending_blob.points, s_points, s_n_points * sizeof(cal_point_t));
 
     cal_do_flash_write();

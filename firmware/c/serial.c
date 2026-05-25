@@ -15,6 +15,8 @@ static char serial_buffer[256];
 static char last_command[256];
 
 static union float_union {float f; uint32_t ui32;} float_xfer;
+static float s_soft_limit = 1500.0f;
+static float s_hard_limit = 1500.0f;
 
 void read_line() {
     memset(serial_buffer, 0, sizeof(serial_buffer));
@@ -53,7 +55,7 @@ bool handle_command(char *command) {
         // Gather all state via sequential FIFO round-trips
         uint32_t hv_en = 0, dac_code = 0, manual = 0, refresh_ms = 0;
         uint32_t smax = 0, smin = 0, tms = 0, faults = 0, fi = 0;
-        float target_v = 0.0f, actual_v = 0.0f, soft_lim = 0.0f;
+        float target_v = 0.0f, actual_v = 0.0f;
 
         multicore_fifo_push_blocking(cmd_get_hv_enabled);
         if (multicore_fifo_pop_blocking() == return_ok) hv_en = multicore_fifo_pop_blocking();
@@ -73,11 +75,6 @@ bool handle_command(char *command) {
 
         multicore_fifo_push_blocking(cmd_get_manual_mode);
         if (multicore_fifo_pop_blocking() == return_ok) manual = multicore_fifo_pop_blocking();
-
-        multicore_fifo_push_blocking(cmd_get_soft_limit);
-        if (multicore_fifo_pop_blocking() == return_ok) {
-            float_xfer.ui32 = multicore_fifo_pop_blocking(); soft_lim = float_xfer.f;
-        }
 
         multicore_fifo_push_blocking(cmd_get_dac_refresh);
         if (multicore_fifo_pop_blocking() == return_ok) refresh_ms = multicore_fifo_pop_blocking();
@@ -101,8 +98,8 @@ bool handle_command(char *command) {
         printf("  Actual voltage:  %8.2f V  (PWM cal table)\n", (double)actual_v);
         printf("  Current DAC:     %u  (0x%03x)\n", (unsigned)dac_code, (unsigned)dac_code);
         printf("  Manual DAC mode: %s\n", manual ? "yes" : "no");
-        printf("  Soft limit:      %8.2f V\n", (double)soft_lim);
-        printf("  Hard limit:      %8.2f V  (fixed)\n", (double)HARD_LIMIT_VOLTS);
+        printf("  Soft limit:      %8.2f V  (sv input cap)\n", (double)s_soft_limit);
+        printf("  Hard limit:      %8.2f V  (control loop ceiling)\n", (double)s_hard_limit);
         if (refresh_ms == 0)
             printf("  DAC refresh:     disabled\n");
         else
@@ -184,39 +181,67 @@ bool handle_command(char *command) {
 
     if(strcmp(command, "sv") == 0 || strcmp(command, "set_voltage") == 0) {
         char **unused;
-        printf(" target voltage in volts (0 - 1500)?\n> ");
+        printf(" target voltage in volts (0 - %.1f)?\n> ", (double)s_soft_limit);
         read_line();
         if (serial_buffer[0] == 0) {
             printf("Cancelled.\n");
             return true;
         }
-        float_xfer.f = strtof(serial_buffer, unused);
+        float v = strtof(serial_buffer, unused);
+        if (v > s_soft_limit) {
+            printf("%.1f V exceeds soft limit (%.1f V). Use sl to raise the limit.\n",
+                   (double)v, (double)s_soft_limit);
+            return true;
+        }
+        float_xfer.f = v;
         multicore_fifo_push_blocking(cmd_set_voltage);
         multicore_fifo_push_blocking(float_xfer.ui32);
         uint32_t result = multicore_fifo_pop_blocking();
         if(result == return_ok)
-            printf("Target voltage set to %.1f V\n", float_xfer.f);
+            printf("Target voltage set to %.1f V\n", v);
         else
             printf("Set voltage failed!\n");
         return true;
     }
 
-    if(strcmp(command, "sl") == 0 || strcmp(command, "set_limit") == 0) {
+    if(strcmp(command, "lim") == 0 || strcmp(command, "limits") == 0) {
         char **unused;
-        printf(" soft voltage limit in volts (0 - 1500)?\n> ");
+
+        printf(" Hard limit — absolute maximum the control loop will target (0 - 1500 V):\n");
+        printf(" current: %.1f V\n> ", (double)s_hard_limit);
         read_line();
-        if (serial_buffer[0] == 0) {
-            printf("Cancelled.\n");
-            return true;
-        }
-        float_xfer.f = strtof(serial_buffer, unused);
+        if (serial_buffer[0] == 0) { printf("Cancelled.\n"); return true; }
+        float hard = strtof(serial_buffer, unused);
+        if (hard < 0.0f)    hard = 0.0f;
+        if (hard > 1500.0f) hard = 1500.0f;
+
+        printf(" Soft limit — maximum value sv will accept (0 - %.1f V):\n", (double)hard);
+        printf(" current: %.1f V\n> ", (double)s_soft_limit);
+        read_line();
+        if (serial_buffer[0] == 0) { printf("Cancelled.\n"); return true; }
+        float soft = strtof(serial_buffer, unused);
+        if (soft < 0.0f)  soft = 0.0f;
+        if (soft > hard)  soft = hard;
+
+        // Send hard limit first so cal clamps soft limit correctly.
+        float_xfer.f = hard;
+        multicore_fifo_push_blocking(cmd_set_hard_limit);
+        multicore_fifo_push_blocking(float_xfer.ui32);
+        uint32_t r1 = multicore_fifo_pop_blocking();
+
+        float_xfer.f = soft;
         multicore_fifo_push_blocking(cmd_set_soft_limit);
         multicore_fifo_push_blocking(float_xfer.ui32);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok)
-            printf("Soft limit set to %.1f V\n", float_xfer.f);
-        else
-            printf("Set soft limit failed!\n");
+        uint32_t r2 = multicore_fifo_pop_blocking();
+
+        if (r1 == return_ok && r2 == return_ok) {
+            s_hard_limit = hard;
+            s_soft_limit = soft;
+            printf("Hard limit: %.1f V   Soft limit: %.1f V  (use csv to persist)\n",
+                   (double)hard, (double)soft);
+        } else {
+            printf("Set limits failed!\n");
+        }
         return true;
     }
 
@@ -514,6 +539,18 @@ void serial_console() {
     multicore_fifo_drain();
     memset(last_command, 0, sizeof(last_command));
 
+    // Load persisted limits from Core 0 (cal module).
+    multicore_fifo_push_blocking(cmd_get_hard_limit);
+    if (multicore_fifo_pop_blocking() == return_ok) {
+        float_xfer.ui32 = multicore_fifo_pop_blocking();
+        s_hard_limit = float_xfer.f;
+    }
+    multicore_fifo_push_blocking(cmd_get_soft_limit);
+    if (multicore_fifo_pop_blocking() == return_ok) {
+        float_xfer.ui32 = multicore_fifo_pop_blocking();
+        s_soft_limit = float_xfer.f;
+    }
+
     while(1) {
         read_line();
         if(!handle_command(serial_buffer)) {
@@ -527,8 +564,8 @@ void serial_console() {
             printf("- [ri] read_current: raw PWM period, Hz\n");
             printf("- [hve] hv_enable: enable HV output / control loop\n");
             printf("- [hvd] hv_disable: disable HV output / control loop\n");
-            printf("- [sv] set_voltage: set target voltage (V)\n");
-            printf("- [sl] set_limit: set soft voltage limit (V)\n");
+            printf("- [sv] set_voltage: set target voltage (V, capped at soft limit)\n");
+            printf("- [lim] limits: set soft limit (sv cap) and hard limit (control loop ceiling)\n");
             printf("- [av] actual_voltage: read estimated actual voltage (PWM cal table)\n");
             printf("- [ai] actual_current: read current feedback (Hz, uncalibrated)\n");
             printf("- [gf] get_faults: show active fault flags\n");

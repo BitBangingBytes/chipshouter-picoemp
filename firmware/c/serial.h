@@ -48,6 +48,10 @@
 #define cmd_get_soft_limit     39  // returns soft limit volts as float bits
 #define cmd_get_manual_mode    40  // returns control_loop_in_manual_mode() as 0/1
 
+// Limit setters/getters
+#define cmd_set_hard_limit     41  // cmd + float bits → sets cal hard limit
+#define cmd_get_hard_limit     42  // returns hard limit volts as float bits
+
 #define return_ok 0
 #define return_failed 1
 

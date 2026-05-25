@@ -34,10 +34,6 @@ bool control_loop_is_enabled();
 void control_loop_set_target_volts(float volts);
 float control_loop_get_target_volts();
 
-// Soft limit (user-configurable ceiling, must be <= HARD_LIMIT_VOLTS).
-void control_loop_set_soft_limit(float volts);
-float control_loop_get_soft_limit();
-
 // Read-back of estimated actual values derived from PWM feedback.
 float control_loop_get_actual_volts();
 float control_loop_get_actual_current();

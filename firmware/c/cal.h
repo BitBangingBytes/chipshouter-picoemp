@@ -52,3 +52,11 @@ cal_src_t cal_source(void);
 // Ramp configuration — persisted alongside the cal table via cal_save().
 void cal_get_ramp(uint16_t *step_max, uint16_t *step_min, uint32_t *tick_ms);
 void cal_set_ramp(uint16_t step_max, uint16_t step_min, uint32_t tick_ms);
+
+// Soft voltage limit (sv input cap) — persisted via cal_save().
+float cal_get_soft_limit(void);
+void  cal_set_soft_limit(float volts);
+
+// Hard voltage limit (absolute ceiling for control loop and faults) — persisted via cal_save().
+float cal_get_hard_limit(void);
+void  cal_set_hard_limit(float volts);
