@@ -1,20 +1,7 @@
 #pragma once
 
 // FIFO commands
-#define cmd_arm 0
-#define cmd_disarm 1
-#define cmd_pulse 2
-#define cmd_status 3
-#define cmd_enable_timeout 4
-#define cmd_disable_timeout 5
-#define cmd_fast_trigger 6
-#define cmd_internal_hvp 7
-#define cmd_external_hvp 8
-#define cmd_config_pulse_time 9
-// cmd_config_pulse_power (10) removed — external PSU replaces on-board HV generation
-#define cmd_toggle_gp1 11
-#define cmd_config_pulse_delay_cycles 12
-#define cmd_config_pulse_time_cycles 13
+// cmds 0-13 removed (arm/disarm/pulse/trigger/hvp/configure — PicoEMP hardware no longer present)
 #define cmd_read_voltage_pwm 14
 #define cmd_read_current_pwm 15
 #define cmd_hv_enable 16
@@ -53,6 +40,13 @@
 // Ramp config: cmd word + step_max (u32), step_min (u32), tick_ms (u32) follow.
 #define cmd_set_ramp 34
 #define cmd_get_ramp 35
+
+// State getters — each returns ok then one word.
+#define cmd_get_dac            36  // returns current DAC code (uint16 as uint32)
+#define cmd_get_hv_enabled     37  // returns control_loop_is_enabled() as 0/1
+#define cmd_get_target_voltage 38  // returns target volts as float bits
+#define cmd_get_soft_limit     39  // returns soft limit volts as float bits
+#define cmd_get_manual_mode    40  // returns control_loop_in_manual_mode() as 0/1
 
 #define return_ok 0
 #define return_failed 1

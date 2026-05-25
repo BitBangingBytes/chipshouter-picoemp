@@ -9,72 +9,32 @@
 #include "hardware/watchdog.h"
 #include "pico/bootrom.h"
 
+#include "control_loop.h"
+
 static char serial_buffer[256];
 static char last_command[256];
 
-#define PULSE_DELAY_CYCLES_DEFAULT 0
-#define PULSE_TIME_CYCLES_DEFAULT 625 // 5us in 8ns cycles
-#define PULSE_TIME_US_DEFAULT 5 // 5us
-static uint32_t pulse_time;
-static uint32_t pulse_delay_cycles;
-static uint32_t pulse_time_cycles;
 static union float_union {float f; uint32_t ui32;} float_xfer;
 
 void read_line() {
     memset(serial_buffer, 0, sizeof(serial_buffer));
-    while(1) {
+    size_t len = 0;
+    while (1) {
         int c = getchar();
-        if(c == EOF) {
-            return;
-        }
-
-        putchar(c);
-
-        if(c == '\r') {
-            return;
-        }
-        if(c == '\n') {
+        if (c == EOF) return;
+        if (c == '\r') { putchar('\r'); putchar('\n'); return; }
+        if (c == '\n') continue;
+        if (c == 0x08 || c == 0x7F) {
+            if (len > 0) {
+                len--;
+                serial_buffer[len] = '\0';
+                putchar(0x08); putchar(' '); putchar(0x08);
+            }
             continue;
         }
-
-        // buffer full, just return.
-        if(strlen(serial_buffer) >= 255) {
-            return;
-        }
-
-        serial_buffer[strlen(serial_buffer)] = (char)c;
-    }
-}
-
-void print_status(uint32_t status) {
-    bool armed = (status >> 0) & 1;
-    bool charged = (status >> 1) & 1;
-    bool timeout_active = (status >> 2) & 1;
-    bool hvp_mode = (status >> 3) & 1;
-    printf("Status:\n");
-    if(armed) {
-        printf("- Armed\n");
-    } else {
-        printf("- Disarmed\n");
-    }
-    if(charged) {
-        printf("- Charged\n");
-    } else {
-        printf("- Not charged\n");
-    }
-    if(timeout_active) {
-        printf("- Timeout active\n");
-    } else {
-        printf("- Timeout disabled\n");
-    }
-    if(hvp_mode) {
-        printf("- HVP internal\n");
-    } else {
-        printf("- HVP external\n");
-    }
-    bool faults_ignored = (status >> 4) & 1;
-    if(faults_ignored) {
-        printf("- Fault ignore ON (faults recorded but do not shut down)\n");
+        if (len >= 255) return;
+        serial_buffer[len++] = (char)c;
+        putchar(c);
     }
 }
 
@@ -89,171 +49,78 @@ bool handle_command(char *command) {
     if(strcmp(command, "h") == 0 || strcmp(command, "help") == 0)
         return false;
 
-    if(strcmp(command, "a") == 0 || strcmp(command, "arm") == 0) {
-        multicore_fifo_push_blocking(cmd_arm);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            printf("Device armed!\n");
-        } else {
-            printf("Arming failed!\n");
-        }
-        return true;
-    }
-    if(strcmp(command, "d") == 0 || strcmp(command, "disarm") == 0) {
-        multicore_fifo_push_blocking(cmd_disarm);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            printf("Device disarmed!\n");
-        } else {
-            printf("Disarming failed!\n");
-        }
-        return true;
-    }
-    if(strcmp(command, "p") == 0 || strcmp(command, "pulse") == 0) {
-        multicore_fifo_push_blocking(cmd_pulse);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            printf("Pulsed!\n");
-        } else {
-            printf("Pulse failed!\n");
-        }
-        return true;
-    }
     if(strcmp(command, "s") == 0 || strcmp(command, "status") == 0) {
-        multicore_fifo_push_blocking(cmd_status);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            print_status(multicore_fifo_pop_blocking());
-        } else {
-            printf("Getting status failed!\n");
-        }
-        return true;
-    }
-    if(strcmp(command, "en") == 0 || strcmp(command, "enable_timeout") == 0) {
-        multicore_fifo_push_blocking(cmd_enable_timeout);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            printf("Timeout enabled!\n");
-        } else {
-            printf("Enabling timeout failed!\n");
-        }
-        return true;
-    }
-    if(strcmp(command, "di") == 0 || strcmp(command, "disable_timeout") == 0) {
-        multicore_fifo_push_blocking(cmd_disable_timeout);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            printf("Timeout disabled!\n");
-        } else {
-            printf("Disabling timeout failed!\n");
-        }
-        return true;
-    }
-    if(strcmp(command, "f") == 0 || strcmp(command, "fast_trigger") == 0) {
-        multicore_fifo_push_blocking(cmd_fast_trigger);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            printf("Fast trigger active...\n");
-            multicore_fifo_pop_blocking();
-            printf("Triggered!\n");
-        } else {
-            printf("Setting up fast trigger failed.");
-        }
-        return true;
-    }
-    if(strcmp(command, "fa") == 0 || strcmp(command, "fast_trigger_configure") == 0) {
-        char **unused;
-        printf(" configure in cycles\n");
-        printf("  1 cycle = 8ns\n");
-        printf("  1us = 125 cycles\n");
-        printf("  1ms = 125000 cycles\n");
-        printf("  max = MAX_UINT32 = 4294967295 cycles = 34359ms\n");
+        // Gather all state via sequential FIFO round-trips
+        uint32_t hv_en = 0, dac_code = 0, manual = 0, refresh_ms = 0;
+        uint32_t smax = 0, smin = 0, tms = 0, faults = 0, fi = 0;
+        float target_v = 0.0f, actual_v = 0.0f, soft_lim = 0.0f;
 
-        printf(" pulse_delay_cycles (current: %d, default: %d)?\n> ", pulse_delay_cycles, PULSE_DELAY_CYCLES_DEFAULT);
-        read_line();
-        printf("\n");
-        if (serial_buffer[0] == 0)
-            printf("Using default\n");
+        multicore_fifo_push_blocking(cmd_get_hv_enabled);
+        if (multicore_fifo_pop_blocking() == return_ok) hv_en = multicore_fifo_pop_blocking();
+
+        multicore_fifo_push_blocking(cmd_get_target_voltage);
+        if (multicore_fifo_pop_blocking() == return_ok) {
+            float_xfer.ui32 = multicore_fifo_pop_blocking(); target_v = float_xfer.f;
+        }
+
+        multicore_fifo_push_blocking(cmd_get_actual_voltage);
+        if (multicore_fifo_pop_blocking() == return_ok) {
+            float_xfer.ui32 = multicore_fifo_pop_blocking(); actual_v = float_xfer.f;
+        }
+
+        multicore_fifo_push_blocking(cmd_get_dac);
+        if (multicore_fifo_pop_blocking() == return_ok) dac_code = multicore_fifo_pop_blocking();
+
+        multicore_fifo_push_blocking(cmd_get_manual_mode);
+        if (multicore_fifo_pop_blocking() == return_ok) manual = multicore_fifo_pop_blocking();
+
+        multicore_fifo_push_blocking(cmd_get_soft_limit);
+        if (multicore_fifo_pop_blocking() == return_ok) {
+            float_xfer.ui32 = multicore_fifo_pop_blocking(); soft_lim = float_xfer.f;
+        }
+
+        multicore_fifo_push_blocking(cmd_get_dac_refresh);
+        if (multicore_fifo_pop_blocking() == return_ok) refresh_ms = multicore_fifo_pop_blocking();
+
+        multicore_fifo_push_blocking(cmd_get_ramp);
+        if (multicore_fifo_pop_blocking() == return_ok) {
+            smax = multicore_fifo_pop_blocking();
+            smin = multicore_fifo_pop_blocking();
+            tms  = multicore_fifo_pop_blocking();
+        }
+
+        multicore_fifo_push_blocking(cmd_get_faults);
+        if (multicore_fifo_pop_blocking() == return_ok) faults = multicore_fifo_pop_blocking();
+
+        multicore_fifo_push_blocking(cmd_get_fault_ignore);
+        if (multicore_fifo_pop_blocking() == return_ok) fi = multicore_fifo_pop_blocking();
+
+        printf("BIO-RAD PSU Status:\n");
+        printf("  HV output:       %s\n", hv_en ? "enabled" : "disabled");
+        printf("  Target voltage:  %8.2f V\n", (double)target_v);
+        printf("  Actual voltage:  %8.2f V  (PWM cal table)\n", (double)actual_v);
+        printf("  Current DAC:     %u  (0x%03x)\n", (unsigned)dac_code, (unsigned)dac_code);
+        printf("  Manual DAC mode: %s\n", manual ? "yes" : "no");
+        printf("  Soft limit:      %8.2f V\n", (double)soft_lim);
+        printf("  Hard limit:      %8.2f V  (fixed)\n", (double)HARD_LIMIT_VOLTS);
+        if (refresh_ms == 0)
+            printf("  DAC refresh:     disabled\n");
         else
-            pulse_delay_cycles = strtoul(serial_buffer, unused, 10);
-        
-        printf(" pulse_time_cycles (current: %d, default: %d)?\n> ", pulse_time_cycles, PULSE_TIME_CYCLES_DEFAULT);
-        read_line();
-        printf("\n");
-        if (serial_buffer[0] == 0)
-            printf("Using default\n");
-        else
-            pulse_time_cycles = strtoul(serial_buffer, unused, 10);
-
-        multicore_fifo_push_blocking(cmd_config_pulse_delay_cycles);
-        multicore_fifo_push_blocking(pulse_delay_cycles);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result != return_ok) {
-            printf("Config pulse_delay_cycles failed.");
-        }
-
-        multicore_fifo_push_blocking(cmd_config_pulse_time_cycles);
-        multicore_fifo_push_blocking(pulse_time_cycles);
-        result = multicore_fifo_pop_blocking();
-        if(result != return_ok) {
-            printf("Config pulse_time_cycles failed.");
-        }
-
-        printf("pulse_delay_cycles=%d, pulse_time_cycles=%d\n", pulse_delay_cycles, pulse_time_cycles);
-
-        return true;
-    }
-    if(strcmp(command, "in") == 0 || strcmp(command, "internal_hvp") == 0) {
-        multicore_fifo_push_blocking(cmd_internal_hvp);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            printf("Internal HVP mode active!\n");
+            printf("  DAC refresh:     %u ms\n", (unsigned)refresh_ms);
+        printf("  Ramp:            step_max=%u  step_min=%u  tick_ms=%u\n",
+               (unsigned)smax, (unsigned)smin, (unsigned)tms);
+        if (faults == 0) {
+            printf("  Faults:          none\n");
         } else {
-            printf("Setting up internal HVP mode failed.");
+            printf("  Faults:          0x%02x", (unsigned)faults);
+            if (faults & 0x01) printf(" [circuit-open]");
+            if (faults & 0x02) printf(" [circuit-shorted]");
+            if (faults & 0x04) printf(" [circuit-unknown]");
+            if (faults & 0x08) printf(" [overvoltage]");
+            if (faults & 0x10) printf(" [overcurrent]");
+            printf("\n");
         }
-        return true;
-    }
-    if(strcmp(command, "ex") == 0 || strcmp(command, "external_hvp") == 0) {
-        multicore_fifo_push_blocking(cmd_external_hvp);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            printf("External HVP mode active!\n");
-        } else {
-            printf("Setting up external HVP mode failed.");
-        }
-        return true;
-    }
-
-    if(strcmp(command, "c") == 0 || strcmp(command, "configure") == 0) {
-        char **unused;
-        printf(" pulse_time (current: %d, default: %d)?\n> ", pulse_time, PULSE_TIME_US_DEFAULT);
-        read_line();
-        printf("\n");
-        if (serial_buffer[0] == 0)
-            printf("Using default\n");
-        else
-            pulse_time = strtoul(serial_buffer, unused, 10);
-
-        multicore_fifo_push_blocking(cmd_config_pulse_time);
-        multicore_fifo_push_blocking(pulse_time);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result != return_ok) {
-            printf("Config pulse_time failed.");
-        }
-
-        printf("pulse_time=%d\n", pulse_time);
-
-        return true;
-    }
-
-    if(strcmp(command, "t") == 0 || strcmp(command, "toggle_gp1") == 0) {
-        multicore_fifo_push_blocking(cmd_toggle_gp1);
-        
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result != return_ok) {
-            printf("target_reset failed.");
-        }
-
+        printf("  Fault ignore:    %s\n", fi ? "on" : "off");
         return true;
     }
 
@@ -286,7 +153,6 @@ bool handle_command(char *command) {
                 printf("Current PWM: No signal\n");
             } else {
                 float hz = 1000000000.0f / (float)period_ns;
-                // TODO: replace with calibrated lookup table once bench measurements are taken
                 printf("Current PWM: period=%uns  freq=%.2fHz  [calibration TODO]\n",
                        period_ns, hz);
             }
@@ -320,7 +186,6 @@ bool handle_command(char *command) {
         char **unused;
         printf(" target voltage in volts (0 - 1500)?\n> ");
         read_line();
-        printf("\n");
         if (serial_buffer[0] == 0) {
             printf("Cancelled.\n");
             return true;
@@ -340,7 +205,6 @@ bool handle_command(char *command) {
         char **unused;
         printf(" soft voltage limit in volts (0 - 1500)?\n> ");
         read_line();
-        printf("\n");
         if (serial_buffer[0] == 0) {
             printf("Cancelled.\n");
             return true;
@@ -433,23 +297,92 @@ bool handle_command(char *command) {
         return true;
     }
 
+    if(strcmp(command, "dacw") == 0 || strcmp(command, "dac_write") == 0) {
+        char **unused;
+        printf(" raw DAC code (0-4095, hex with 0x or decimal)?\n> ");
+        read_line();
+        if (serial_buffer[0] == 0) {
+            printf("Cancelled.\n");
+            return true;
+        }
+        unsigned long val = strtoul(serial_buffer, unused, 0);
+        if (val > 4095) {
+            printf("Value out of range (0-4095).\n");
+            return true;
+        }
+        multicore_fifo_push_blocking(cmd_debug_dac_raw);
+        multicore_fifo_push_blocking((uint32_t)val);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if(result == return_ok) {
+            printf("Wrote raw DAC code %lu (0x%03lx, 0b", val, val);
+            for (int b = 11; b >= 0; b--) putchar(((val >> b) & 1u) ? '1' : '0');
+            printf(")\n");
+        } else {
+            printf("Raw DAC write failed!\n");
+        }
+        return true;
+    }
+
+    if(strcmp(command, "dacr") == 0 || strcmp(command, "dac_read") == 0) {
+        multicore_fifo_push_blocking(cmd_get_dac);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if (result == return_ok) {
+            uint32_t code = multicore_fifo_pop_blocking();
+            printf("Current DAC code: %u (0x%03x)\n", (unsigned)code, (unsigned)code);
+        } else {
+            printf("Read DAC failed!\n");
+        }
+        return true;
+    }
+
+    if(strcmp(command, "sdr") == 0 || strcmp(command, "set_dac_refresh") == 0) {
+        char **unused;
+        printf(" DAC refresh interval in ms (0 = disable, default: 500)?\n> ");
+        read_line();
+        if (serial_buffer[0] == 0) {
+            printf("Cancelled.\n");
+            return true;
+        }
+        uint32_t ms = (uint32_t)strtoul(serial_buffer, unused, 10);
+        multicore_fifo_push_blocking(cmd_set_dac_refresh);
+        multicore_fifo_push_blocking(ms);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if (result == return_ok)
+            printf("DAC refresh interval set to %u ms%s\n", ms, ms == 0 ? " (disabled)" : "");
+        else
+            printf("Set DAC refresh failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "gdr") == 0 || strcmp(command, "get_dac_refresh") == 0) {
+        multicore_fifo_push_blocking(cmd_get_dac_refresh);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if (result == return_ok) {
+            uint32_t ms = multicore_fifo_pop_blocking();
+            if (ms == 0)
+                printf("DAC refresh: disabled\n");
+            else
+                printf("DAC refresh: %u ms\n", ms);
+        } else {
+            printf("Get DAC refresh failed!\n");
+        }
+        return true;
+    }
+
     if(strcmp(command, "sr") == 0 || strcmp(command, "set_ramp") == 0) {
         char **unused;
         printf(" Ramp step_max (DAC codes, largest step at start)?\n> ");
         read_line();
-        printf("\n");
         if (serial_buffer[0] == 0) { printf("Cancelled.\n"); return true; }
         uint16_t smax = (uint16_t)strtoul(serial_buffer, unused, 10);
 
         printf(" Ramp step_min (DAC codes, smallest step near target)?\n> ");
         read_line();
-        printf("\n");
         if (serial_buffer[0] == 0) { printf("Cancelled.\n"); return true; }
         uint16_t smin = (uint16_t)strtoul(serial_buffer, unused, 10);
 
         printf(" Ramp tick_ms (ms between steps)?\n> ");
         read_line();
-        printf("\n");
         if (serial_buffer[0] == 0) { printf("Cancelled.\n"); return true; }
         uint32_t tms = (uint32_t)strtoul(serial_buffer, unused, 10);
 
@@ -481,73 +414,10 @@ bool handle_command(char *command) {
         return true;
     }
 
-    if(strcmp(command, "sdr") == 0 || strcmp(command, "set_dac_refresh") == 0) {
-        char **unused;
-        printf(" DAC refresh interval in ms (0 = disable, default: 500)?\n> ");
-        read_line();
-        printf("\n");
-        if (serial_buffer[0] == 0) {
-            printf("Cancelled.\n");
-            return true;
-        }
-        uint32_t ms = (uint32_t)strtoul(serial_buffer, unused, 10);
-        multicore_fifo_push_blocking(cmd_set_dac_refresh);
-        multicore_fifo_push_blocking(ms);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if (result == return_ok)
-            printf("DAC refresh interval set to %u ms%s\n", ms, ms == 0 ? " (disabled)" : "");
-        else
-            printf("Set DAC refresh failed!\n");
-        return true;
-    }
-
-    if(strcmp(command, "gdr") == 0 || strcmp(command, "get_dac_refresh") == 0) {
-        multicore_fifo_push_blocking(cmd_get_dac_refresh);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if (result == return_ok) {
-            uint32_t ms = multicore_fifo_pop_blocking();
-            if (ms == 0)
-                printf("DAC refresh: disabled\n");
-            else
-                printf("DAC refresh: %u ms\n", ms);
-        } else {
-            printf("Get DAC refresh failed!\n");
-        }
-        return true;
-    }
-
-    if(strcmp(command, "dd") == 0 || strcmp(command, "debug_dac") == 0) {
-        char **unused;
-        printf(" raw DAC code (0-4095, hex with 0x or decimal)?\n> ");
-        read_line();
-        printf("\n");
-        if (serial_buffer[0] == 0) {
-            printf("Cancelled.\n");
-            return true;
-        }
-        unsigned long val = strtoul(serial_buffer, unused, 0);
-        if (val > 4095) {
-            printf("Value out of range (0-4095).\n");
-            return true;
-        }
-        multicore_fifo_push_blocking(cmd_debug_dac_raw);
-        multicore_fifo_push_blocking((uint32_t)val);
-        uint32_t result = multicore_fifo_pop_blocking();
-        if(result == return_ok) {
-            printf("Wrote raw DAC code %lu (0x%03lx, 0b", val, val);
-            for (int b = 11; b >= 0; b--) putchar(((val >> b) & 1u) ? '1' : '0');
-            printf(")\n");
-        } else {
-            printf("Raw DAC write failed!\n");
-        }
-        return true;
-    }
-
     if(strcmp(command, "cap") == 0 || strcmp(command, "cal_capture") == 0) {
         char **unused;
         printf(" measured voltage at current PWM (V)?\n> ");
         read_line();
-        printf("\n");
         if (serial_buffer[0] == 0) {
             printf("Cancelled.\n");
             return true;
@@ -592,7 +462,6 @@ bool handle_command(char *command) {
         char **unused;
         printf(" index to remove?\n> ");
         read_line();
-        printf("\n");
         if (serial_buffer[0] == 0) {
             printf("Cancelled.\n");
             return true;
@@ -643,32 +512,15 @@ bool handle_command(char *command) {
 
 void serial_console() {
     multicore_fifo_drain();
-
     memset(last_command, 0, sizeof(last_command));
 
-    pulse_time = PULSE_TIME_US_DEFAULT;
-    pulse_delay_cycles = PULSE_DELAY_CYCLES_DEFAULT;
-    pulse_time_cycles = PULSE_TIME_CYCLES_DEFAULT;
-    
     while(1) {
         read_line();
-        printf("\n");
         if(!handle_command(serial_buffer)) {
-            printf("PicoEMP Commands:\n");
+            printf("BIO-RAD Commands:\n");
             printf("- <empty to repeat last command>\n");
             printf("- [h]elp\n");
-            printf("- [a]rm\n");
-            printf("- [d]isarm\n");
-            printf("- [p]ulse\n");
-            printf("- [en]able_timeout\n");
-            printf("- [di]sable_timeout\n");
-            printf("- [f]ast_trigger\n");
-            printf("- [fa]st_trigger_configure: delay_cycles=%d, time_cycles=%d\n", pulse_delay_cycles, pulse_time_cycles);
-            printf("- [in]ternal_hvp\n");
-            printf("- [ex]ternal_hvp\n");
-            printf("- [c]onfigure: pulse_time=%d\n", pulse_time);
-            printf("- [t]oggle_gp1\n");
-            printf("- [s]tatus\n");
+            printf("- [s]tatus: show all configurable and measured state\n");
             printf("- [r]eset\n");
             printf("- [b]ootload: reboot into USB firmware loading mode\n");
             printf("- [rv] read_voltage: raw PWM period, Hz, and cal-table volts\n");
@@ -677,25 +529,26 @@ void serial_console() {
             printf("- [hvd] hv_disable: disable HV output / control loop\n");
             printf("- [sv] set_voltage: set target voltage (V)\n");
             printf("- [sl] set_limit: set soft voltage limit (V)\n");
-            printf("- [av] actual_voltage: read estimated actual voltage\n");
-            printf("- [ai] actual_current: read current feedback (Hz)\n");
+            printf("- [av] actual_voltage: read estimated actual voltage (PWM cal table)\n");
+            printf("- [ai] actual_current: read current feedback (Hz, uncalibrated)\n");
             printf("- [gf] get_faults: show active fault flags\n");
             printf("- [cf] clear_faults: clear sticky fault register\n");
             printf("- [fi] fault_ignore: record faults but suppress shutdown\n");
             printf("- [fn] fault_normal: restore normal fault shutdown behavior\n");
-            printf("- [dd] debug_dac: write raw 12-bit DAC code (0-4095); pauses closed loop if HV is on\n");
+            printf("- [dacw] dac_write: write raw 12-bit DAC code (0-4095); pauses ramp if HV is on\n");
+            printf("- [dacr] dac_read: read current DAC code\n");
             printf("- [sdr] set_dac_refresh: set periodic DAC resend interval in ms (0 = disable)\n");
             printf("- [gdr] get_dac_refresh: show current DAC refresh interval\n");
             printf("- [sr] set_ramp: set parabolic ramp params (step_max, step_min, tick_ms)\n");
             printf("- [gr] get_ramp: show current ramp params\n");
-            printf("- [cap] cal_capture: record current PWM as a cal point at user-measured volts\n");
-            printf("- [cls] cal_list: show current PWM->volts cal table and its source\n");
+            printf("- [cap] cal_capture: record cal point at user-measured volts with current DAC\n");
+            printf("- [cls] cal_list: show voltage->DAC cal table and its source\n");
             printf("- [crm] cal_remove: remove a cal point by index\n");
-            printf("- [csv] cal_save: persist current cal to flash\n");
+            printf("- [csv] cal_save: persist current cal (including ramp params) to flash\n");
             printf("- [crd] cal_default: reset cal to compiled defaults (use csv to persist)\n");
         }
         printf("\n");
-        
+
         if (last_command[0] != 0) {
             printf("[%s] > ", last_command);
         } else {

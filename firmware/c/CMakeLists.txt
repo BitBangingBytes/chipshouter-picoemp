@@ -8,7 +8,6 @@ pico_sdk_init()
 
 add_executable(picoemp)
 
-pico_generate_pio_header(picoemp ${CMAKE_CURRENT_LIST_DIR}/trigger_basic.pio)
 pico_generate_pio_header(picoemp ${CMAKE_CURRENT_LIST_DIR}/freq_measure.pio)
 pico_generate_pio_header(picoemp ${CMAKE_CURRENT_LIST_DIR}/dac_sequencer.pio)
 
@@ -23,7 +22,7 @@ target_sources(picoemp PRIVATE
         control_loop.c
         )
 
-target_link_libraries(picoemp PRIVATE pico_stdlib hardware_pwm hardware_pio hardware_dma hardware_flash pico_multicore m)
+target_link_libraries(picoemp PRIVATE pico_stdlib hardware_pio hardware_dma hardware_flash pico_multicore m)
 pico_add_extra_outputs(picoemp)
 
 # enable usb output, disable uart output
