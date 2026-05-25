@@ -7,6 +7,7 @@
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
 #include "hardware/watchdog.h"
+#include "pico/bootrom.h"
 
 static char serial_buffer[256];
 static char last_command[256];
@@ -581,6 +582,11 @@ bool handle_command(char *command) {
         while(1);
     }
 
+    if(strcmp(command, "b") == 0 || strcmp(command, "bootload") == 0) {
+        printf("Rebooting to firmware loading mode...\n");
+        reset_usb_boot(0, 0);
+    }
+
     return false;
 }
 
@@ -613,6 +619,7 @@ void serial_console() {
             printf("- [t]oggle_gp1\n");
             printf("- [s]tatus\n");
             printf("- [r]eset\n");
+            printf("- [b]ootload: reboot into USB firmware loading mode\n");
             printf("- [rv] read_voltage: raw PWM period, Hz, and cal-table volts\n");
             printf("- [ri] read_current: raw PWM period, Hz\n");
             printf("- [hve] hv_enable: enable HV output / control loop\n");
