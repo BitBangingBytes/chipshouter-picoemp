@@ -572,15 +572,15 @@ bool handle_command(char *command) {
         }
         uint32_t n = multicore_fifo_pop_blocking();
         printf("Cal points (%u):\n", (unsigned)n);
-        printf("  %-10s | %-6s | %s\n", "Voltage", "DAC", "PWM Frequency");
-        printf("  -----------+--------+--------------\n");
+        printf("  %-3s | %-10s | %-6s | %s\n", "Idx", "Voltage", "DAC", "PWM Frequency");
+        printf("  ----+------------+--------+--------------\n");
         for (uint32_t i = 0; i < n; i++) {
             float_xfer.ui32 = multicore_fifo_pop_blocking();
             float volts = float_xfer.f;
             float_xfer.ui32 = multicore_fifo_pop_blocking();
             float hz = float_xfer.f;
             uint32_t dac = multicore_fifo_pop_blocking();
-            printf("  %8.2f V | %6u | %10.2f Hz\n", volts, (unsigned)dac, hz);
+            printf("  %3u | %8.2f V | %6u | %10.2f Hz\n", (unsigned)i, volts, (unsigned)dac, hz);
         }
         uint32_t src = multicore_fifo_pop_blocking();
         const char *src_str = (src == 0) ? "defaults" : (src == 1) ? "flash" : "runtime (unsaved)";
