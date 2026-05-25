@@ -13,27 +13,9 @@
 // Control parameters
 // ---------------------------------------------------------------------------
 
-// Max DAC counts to change per control tick to limit slew rate.
-#define RAMP_STEP_MAX    25u
-
-// Error deadband in volts — don't adjust DAC if within this window.
-#define DEADBAND_VOLTS   1.5f
-
-// Proportional gain: DAC counts per volt of error.
-// Roughly the slope of the V→DAC characteristic (~2-2.8 codes/V across range).
-#define KP_DAC_PER_VOLT  0.7f
-
-// Starting DAC code on enable; closed-loop ramps from here toward setpoint.
-#define INITIAL_DAC_CODE 10u
-
-// Minimum wall-clock time between DAC adjustments. Floors the update rate so
-// the PSU has time to respond before the next correction — without this, at
-// high voltages a fresh PWM average can arrive every few ms and the loop hunts.
-#define MIN_ADJUST_DWELL_US 60000u   // 60 ms
-
 // Periodic DAC refresh: resend current code unconditionally at this interval
-// even when the control loop is in deadband. Keeps the DAC consistent after
-// noise glitches on the SPI bus. 0 disables the refresh.
+// even when the ramp is complete. Keeps the DAC consistent after noise glitches
+// on the SPI bus. 0 disables the refresh.
 #define DAC_REFRESH_INTERVAL_MS_DEFAULT 500u
 
 // Current: rough conversion — placeholder (period_ns → amps not yet calibrated).
@@ -54,26 +36,29 @@ static uint16_t current_dac        = 0;
 static float    actual_volts       = 0.0f;
 static float    actual_current     = 0.0f;
 static uint32_t fault_reg          = 0;
-static uint32_t last_processed_seq = 0;  // last voltage-PWM sample_seq we acted on
-static bool     shutdown_latched   = false; // true while fault shutdown_output has already run
-static uint64_t last_adjust_us     = 0;     // wall time of last DAC adjustment (for MIN_ADJUST_DWELL_US)
-static bool     manual_mode        = false; // closed-loop paused for raw DAC writes
-static bool     faults_ignored     = false; // when true, faults are recorded but don't trigger shutdown
+static bool     shutdown_latched   = false;
+static bool     manual_mode        = false;
+static bool     faults_ignored     = false;
 static uint32_t dac_refresh_interval_ms = DAC_REFRESH_INTERVAL_MS_DEFAULT;
 static uint64_t last_dac_refresh_us     = 0;
+
+// Parabolic ramp state
+static uint16_t ramp_start_dac      = 0;
+static uint32_t ramp_start_distance = 0;
+static uint64_t last_ramp_tick_us   = 0;
 
 // LED flash state machine
 static uint64_t led_next_us     = 0;
 static bool     led_state       = false;
-static uint32_t led_flash_count = 0;  // flashes remaining in current burst
+static uint32_t led_flash_count = 0;
 static uint64_t led_pause_until = 0;
 
-#define LED_ON_US    150000u   // 150 ms on
-#define LED_OFF_US   100000u   // 100 ms between flashes
-#define LED_PAUSE_US 1000000u  // 1000 ms between bursts
+#define LED_ON_US    150000u
+#define LED_OFF_US   100000u
+#define LED_PAUSE_US 1000000u
 
 static void set_dac_safe(uint16_t code) {
-    if (!dac_write_done()) return;  // previous write still in flight
+    if (!dac_write_done()) return;
     current_dac = code;
     dac_write(code);
 }
@@ -81,9 +66,7 @@ static void set_dac_safe(uint16_t code) {
 static void shutdown_output() {
     set_dac_safe(0);
     current_dac = 0;
-    gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled
-    // HV is off — drive STR HIGH so the DAC chip is deselected. Blocks until
-    // the in-flight DAC=0 write drains, then pushes a single deselect word.
+    gpio_put(PIN_OUT_HV_Enable, true);
     dac_deselect();
 }
 
@@ -93,7 +76,7 @@ static void check_faults() {
     if (gpio_get(PIN_IN_Circuit_UNKNOWN)) fault_reg |= FAULT_CIRCUIT_UNKNOWN;
 
     float hard_ceil = (HARD_LIMIT_VOLTS < soft_limit) ? HARD_LIMIT_VOLTS : soft_limit;
-    if (actual_volts > hard_ceil + DEADBAND_VOLTS) fault_reg |= FAULT_OVERVOLTAGE;
+    if (actual_volts > hard_ceil) fault_reg |= FAULT_OVERVOLTAGE;
 }
 
 // ---------------------------------------------------------------------------
@@ -101,24 +84,23 @@ static void check_faults() {
 // ---------------------------------------------------------------------------
 
 void control_loop_init() {
-    current_dac        = 0;
-    target_volts       = 0.0f;
-    soft_limit         = HARD_LIMIT_VOLTS;
-    fault_reg          = 0;
-    cl_enabled         = false;
-    last_processed_seq = 0;
-    shutdown_latched   = false;
-    last_adjust_us          = 0;
+    current_dac             = 0;
+    target_volts            = 0.0f;
+    soft_limit              = HARD_LIMIT_VOLTS;
+    fault_reg               = 0;
+    cl_enabled              = false;
+    shutdown_latched        = false;
     manual_mode             = false;
     faults_ignored          = false;
     dac_refresh_interval_ms = DAC_REFRESH_INTERVAL_MS_DEFAULT;
     last_dac_refresh_us     = 0;
-    gpio_put(PIN_OUT_HV_Enable, true);   // HIGH = disabled at startup
+    ramp_start_dac          = 0;
+    ramp_start_distance     = 0;
+    last_ramp_tick_us       = 0;
+    gpio_put(PIN_OUT_HV_Enable, true);
 }
 
 void control_loop_tick() {
-    // Always refresh feedback and check faults so safety/observability work
-    // independently of how often a fresh PWM average arrives.
     actual_volts   = cal_period_ns_to_volts(
         psu_monitor_voltage_is_valid() ? psu_monitor_get_voltage_period_ns() : 0);
     actual_current = period_ns_to_current(
@@ -127,8 +109,6 @@ void control_loop_tick() {
     check_faults();
 
     if (fault_reg != 0 && !faults_ignored) {
-        // Latch the shutdown so we don't keep firing DAC writes (CLK/STR pulses)
-        // every main-loop iteration while the fault persists.
         if (!shutdown_latched) {
             shutdown_output();
             shutdown_latched = true;
@@ -136,52 +116,46 @@ void control_loop_tick() {
         return;
     }
     if (!cl_enabled) return;
-
-    // Manual DAC mode (entered by raw `dd` while HV enabled): keep feedback /
-    // fault paths alive but stop driving the DAC ourselves.
     if (manual_mode) return;
 
-    // Periodic DAC refresh — resend the current code unconditionally at the
-    // configured interval so transient SPI noise can't leave the DAC in a
-    // wrong state. Runs independently of the closed-loop adjustment path.
-    uint64_t now_refresh = time_us_64();
+    // Periodic DAC refresh — resend the current code unconditionally.
+    uint64_t now = time_us_64();
     if (dac_refresh_interval_ms > 0 &&
-        (now_refresh - last_dac_refresh_us) >= (uint64_t)dac_refresh_interval_ms * 1000u) {
-        last_dac_refresh_us = now_refresh;
+        (now - last_dac_refresh_us) >= (uint64_t)dac_refresh_interval_ms * 1000u) {
+        last_dac_refresh_us = now;
         set_dac_safe(current_dac);
     }
 
-    // Gate the DAC adjustment on a freshly completed PWM average.
-    uint32_t seq = psu_monitor_voltage_sample_seq();
-    if (seq == last_processed_seq) return;
-    last_processed_seq = seq;
+    // Throttle ramp to cal-configured tick interval.
+    uint16_t step_max; uint16_t step_min; uint32_t tick_ms;
+    cal_get_ramp(&step_max, &step_min, &tick_ms);
 
-    // Clamp target to hard and soft limits
-    float ceiling = (HARD_LIMIT_VOLTS < soft_limit) ? HARD_LIMIT_VOLTS : soft_limit;
-    float setpoint = (target_volts > ceiling) ? ceiling : target_volts;
+    if ((now - last_ramp_tick_us) < (uint64_t)tick_ms * 1000u) return;
+    last_ramp_tick_us = now;
 
-    float error = setpoint - actual_volts;
+    uint16_t target_dac = cal_volts_to_dac(target_volts);
+    if (current_dac == target_dac) return;
 
-    // Deadband — no adjustment needed
-    if (fabsf(error) <= DEADBAND_VOLTS) return;
+    uint32_t remaining = (target_dac > current_dac)
+                         ? (uint32_t)(target_dac - current_dac)
+                         : (uint32_t)(current_dac - target_dac);
 
-    // Minimum dwell between adjustments — caps update rate even when fresh PWM
-    // averages arrive faster than the PSU can respond.
-    uint64_t now = time_us_64();
-    if ((now - last_adjust_us) < MIN_ADJUST_DWELL_US) return;
-    last_adjust_us = now;
+    // Parabolic deceleration profile: step² interpolates between step_max² (at
+    // ramp start) and step_min² (at target), producing smooth kinematic braking.
+    float fraction = (ramp_start_distance > 0)
+                     ? (float)remaining / (float)ramp_start_distance : 0.0f;
+    if (fraction > 1.0f) fraction = 1.0f;
+    float step_f = sqrtf((float)step_max * (float)step_max * fraction
+                       + (float)step_min * (float)step_min * (1.0f - fraction));
+    uint16_t step = (uint16_t)(step_f + 0.5f);
+    if (step < step_min)            step = step_min;
+    if (step > step_max)            step = step_max;
+    if ((uint32_t)step > remaining) step = (uint16_t)remaining;
 
-    // Proportional control: DAC drifts toward whatever code produces setpoint.
-    // Sign of error drives direction; ramp limit caps slew rate.
-    int32_t delta = (int32_t)(error * KP_DAC_PER_VOLT);
-    if (delta >  (int32_t)RAMP_STEP_MAX) delta =  (int32_t)RAMP_STEP_MAX;
-    if (delta < -(int32_t)RAMP_STEP_MAX) delta = -(int32_t)RAMP_STEP_MAX;
-
-    int32_t next_dac = (int32_t)current_dac + delta;
-    if (next_dac < 0)    next_dac = 0;
-    if (next_dac > 4095) next_dac = 4095;
-
-    set_dac_safe((uint16_t)next_dac);
+    if (target_dac > current_dac)
+        set_dac_safe(current_dac + step);
+    else
+        set_dac_safe(current_dac - step);
 }
 
 void control_loop_led_tick() {
@@ -193,7 +167,6 @@ void control_loop_led_tick() {
 
     uint64_t now = time_us_64();
 
-    // Count number of set fault bits for burst length
     uint32_t bits = fault_reg;
     uint count = 0;
     while (bits) { count += bits & 1u; bits >>= 1; }
@@ -226,18 +199,17 @@ void control_loop_led_tick() {
 
 void control_loop_enable(bool en) {
     cl_enabled  = en;
-    manual_mode = false;   // any enable/disable transition exits manual mode
+    manual_mode = false;
     if (en) {
-        gpio_put(PIN_OUT_HV_Enable, false);  // LOW = enabled — assert before first DAC write
-        // Seed DAC at a low starting code; closed-loop ramps from here.
+        gpio_put(PIN_OUT_HV_Enable, false);
         while (!dac_write_done()) tight_loop_contents();
-        current_dac = INITIAL_DAC_CODE;
+        current_dac         = INITIAL_DAC_CODE;
+        ramp_start_dac      = INITIAL_DAC_CODE;
+        ramp_start_distance = 0;
+        last_ramp_tick_us   = time_us_64();
         dac_write(INITIAL_DAC_CODE);
-        // Start dwell timer from the seed so the first closed-loop adjustment
-        // waits MIN_ADJUST_DWELL_US, giving the PSU time to respond.
-        last_adjust_us = time_us_64();
     } else {
-        shutdown_output();                   // zeros DAC, then sets Enable HIGH (disabled)
+        shutdown_output();
     }
 }
 
@@ -248,6 +220,13 @@ void control_loop_set_target_volts(float volts) {
     if (volts < 0.0f)    volts = 0.0f;
     if (volts > ceiling) volts = ceiling;
     target_volts = volts;
+
+    // Capture ramp origin so the parabolic profile starts from current position.
+    ramp_start_dac          = current_dac;
+    uint16_t target_dac     = cal_volts_to_dac(target_volts);
+    ramp_start_distance     = (target_dac > current_dac)
+                              ? (uint32_t)(target_dac - current_dac)
+                              : (uint32_t)(current_dac - target_dac);
 }
 
 float control_loop_get_target_volts() { return target_volts; }
@@ -256,7 +235,6 @@ void control_loop_set_soft_limit(float volts) {
     if (volts > HARD_LIMIT_VOLTS) volts = HARD_LIMIT_VOLTS;
     if (volts < 0.0f) volts = 0.0f;
     soft_limit = volts;
-    // Re-clamp target
     if (target_volts > soft_limit) target_volts = soft_limit;
 }
 
@@ -264,6 +242,7 @@ float control_loop_get_soft_limit() { return soft_limit; }
 
 float control_loop_get_actual_volts()   { return actual_volts; }
 float control_loop_get_actual_current() { return actual_current; }
+uint16_t control_loop_get_current_dac() { return current_dac; }
 
 uint32_t control_loop_get_faults() { return fault_reg; }
 
@@ -275,8 +254,8 @@ void control_loop_clear_faults() {
 void control_loop_set_manual_mode(bool en) { manual_mode = en; }
 bool control_loop_in_manual_mode()         { return manual_mode; }
 
-void control_loop_set_dac_refresh_ms(uint32_t ms) { dac_refresh_interval_ms = ms; }
-uint32_t control_loop_get_dac_refresh_ms()         { return dac_refresh_interval_ms; }
-
 void control_loop_set_faults_ignored(bool en) { faults_ignored = en; }
 bool control_loop_get_faults_ignored()         { return faults_ignored; }
+
+void control_loop_set_dac_refresh_ms(uint32_t ms) { dac_refresh_interval_ms = ms; }
+uint32_t control_loop_get_dac_refresh_ms()         { return dac_refresh_interval_ms; }

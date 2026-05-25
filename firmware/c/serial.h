@@ -50,6 +50,10 @@
 #define cmd_set_fault_ignore 32
 #define cmd_get_fault_ignore 33
 
+// Ramp config: cmd word + step_max (u32), step_min (u32), tick_ms (u32) follow.
+#define cmd_set_ramp 34
+#define cmd_get_ramp 35
+
 #define return_ok 0
 #define return_failed 1
 

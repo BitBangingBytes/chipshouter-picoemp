@@ -243,7 +243,7 @@ int main() {
                 }
                 case cmd_cal_capture: {
                     float_xfer.ui32 = multicore_fifo_pop_blocking();
-                    bool ok = cal_capture(float_xfer.f);
+                    bool ok = cal_capture(float_xfer.f, control_loop_get_current_dac());
                     multicore_fifo_push_blocking(ok ? return_ok : return_failed);
                     break;
                 }
@@ -260,6 +260,23 @@ int main() {
                 case cmd_cal_save: {
                     bool ok = cal_save();
                     multicore_fifo_push_blocking(ok ? return_ok : return_failed);
+                    break;
+                }
+                case cmd_set_ramp: {
+                    uint16_t smax = (uint16_t)multicore_fifo_pop_blocking();
+                    uint16_t smin = (uint16_t)multicore_fifo_pop_blocking();
+                    uint32_t tms  = multicore_fifo_pop_blocking();
+                    cal_set_ramp(smax, smin, tms);
+                    multicore_fifo_push_blocking(return_ok);
+                    break;
+                }
+                case cmd_get_ramp: {
+                    uint16_t smax, smin; uint32_t tms;
+                    cal_get_ramp(&smax, &smin, &tms);
+                    multicore_fifo_push_blocking(return_ok);
+                    multicore_fifo_push_blocking((uint32_t)smax);
+                    multicore_fifo_push_blocking((uint32_t)smin);
+                    multicore_fifo_push_blocking(tms);
                     break;
                 }
                 case cmd_set_fault_ignore:
@@ -291,6 +308,7 @@ int main() {
                         multicore_fifo_push_blocking(float_xfer.ui32);
                         float_xfer.f = pt.hz;
                         multicore_fifo_push_blocking(float_xfer.ui32);
+                        multicore_fifo_push_blocking((uint32_t)pt.dac_code);
                     }
                     multicore_fifo_push_blocking((uint32_t)cal_source());
                     break;

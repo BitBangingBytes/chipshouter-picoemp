@@ -433,6 +433,54 @@ bool handle_command(char *command) {
         return true;
     }
 
+    if(strcmp(command, "sr") == 0 || strcmp(command, "set_ramp") == 0) {
+        char **unused;
+        printf(" Ramp step_max (DAC codes, largest step at start)?\n> ");
+        read_line();
+        printf("\n");
+        if (serial_buffer[0] == 0) { printf("Cancelled.\n"); return true; }
+        uint16_t smax = (uint16_t)strtoul(serial_buffer, unused, 10);
+
+        printf(" Ramp step_min (DAC codes, smallest step near target)?\n> ");
+        read_line();
+        printf("\n");
+        if (serial_buffer[0] == 0) { printf("Cancelled.\n"); return true; }
+        uint16_t smin = (uint16_t)strtoul(serial_buffer, unused, 10);
+
+        printf(" Ramp tick_ms (ms between steps)?\n> ");
+        read_line();
+        printf("\n");
+        if (serial_buffer[0] == 0) { printf("Cancelled.\n"); return true; }
+        uint32_t tms = (uint32_t)strtoul(serial_buffer, unused, 10);
+
+        multicore_fifo_push_blocking(cmd_set_ramp);
+        multicore_fifo_push_blocking((uint32_t)smax);
+        multicore_fifo_push_blocking((uint32_t)smin);
+        multicore_fifo_push_blocking(tms);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if (result == return_ok)
+            printf("Ramp set: step_max=%u  step_min=%u  tick_ms=%u  (use csv to persist)\n",
+                   (unsigned)smax, (unsigned)smin, (unsigned)tms);
+        else
+            printf("Set ramp failed!\n");
+        return true;
+    }
+
+    if(strcmp(command, "gr") == 0 || strcmp(command, "get_ramp") == 0) {
+        multicore_fifo_push_blocking(cmd_get_ramp);
+        uint32_t result = multicore_fifo_pop_blocking();
+        if (result == return_ok) {
+            uint32_t smax = multicore_fifo_pop_blocking();
+            uint32_t smin = multicore_fifo_pop_blocking();
+            uint32_t tms  = multicore_fifo_pop_blocking();
+            printf("Ramp: step_max=%u  step_min=%u  tick_ms=%u\n",
+                   (unsigned)smax, (unsigned)smin, (unsigned)tms);
+        } else {
+            printf("Get ramp failed!\n");
+        }
+        return true;
+    }
+
     if(strcmp(command, "sdr") == 0 || strcmp(command, "set_dac_refresh") == 0) {
         char **unused;
         printf(" DAC refresh interval in ms (0 = disable, default: 500)?\n> ");
@@ -524,12 +572,15 @@ bool handle_command(char *command) {
         }
         uint32_t n = multicore_fifo_pop_blocking();
         printf("Cal points (%u):\n", (unsigned)n);
+        printf("  %-10s | %-6s | %s\n", "Voltage", "DAC", "PWM Frequency");
+        printf("  -----------+--------+--------------\n");
         for (uint32_t i = 0; i < n; i++) {
             float_xfer.ui32 = multicore_fifo_pop_blocking();
             float volts = float_xfer.f;
             float_xfer.ui32 = multicore_fifo_pop_blocking();
             float hz = float_xfer.f;
-            printf("  [%u] %8.2f V -> %10.2f Hz\n", (unsigned)i, volts, hz);
+            uint32_t dac = multicore_fifo_pop_blocking();
+            printf("  %8.2f V | %6u | %10.2f Hz\n", volts, (unsigned)dac, hz);
         }
         uint32_t src = multicore_fifo_pop_blocking();
         const char *src_str = (src == 0) ? "defaults" : (src == 1) ? "flash" : "runtime (unsaved)";
@@ -635,6 +686,8 @@ void serial_console() {
             printf("- [dd] debug_dac: write raw 12-bit DAC code (0-4095); pauses closed loop if HV is on\n");
             printf("- [sdr] set_dac_refresh: set periodic DAC resend interval in ms (0 = disable)\n");
             printf("- [gdr] get_dac_refresh: show current DAC refresh interval\n");
+            printf("- [sr] set_ramp: set parabolic ramp params (step_max, step_min, tick_ms)\n");
+            printf("- [gr] get_ramp: show current ramp params\n");
             printf("- [cap] cal_capture: record current PWM as a cal point at user-measured volts\n");
             printf("- [cls] cal_list: show current PWM->volts cal table and its source\n");
             printf("- [crm] cal_remove: remove a cal point by index\n");
