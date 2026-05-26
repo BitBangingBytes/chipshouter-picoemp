@@ -64,11 +64,6 @@ int main() {
                     multicore_fifo_push_blocking(return_ok);
                     multicore_fifo_push_blocking(float_xfer.ui32);
                     break;
-                case cmd_get_actual_current:
-                    float_xfer.f = control_loop_get_actual_current();
-                    multicore_fifo_push_blocking(return_ok);
-                    multicore_fifo_push_blocking(float_xfer.ui32);
-                    break;
                 case cmd_get_faults:
                     multicore_fifo_push_blocking(return_ok);
                     multicore_fifo_push_blocking(control_loop_get_faults());

@@ -222,61 +222,68 @@ bool handle_command(char *command) {
     // Monitoring
     // -------------------------------------------------------------------------
 
-    if(strcmp(command, "rv") == 0 || strcmp(command, "read_voltage") == 0) {
-        multicore_fifo_push_blocking(cmd_read_voltage_pwm);
-        if (multicore_fifo_pop_blocking() == return_ok) {
-            uint32_t period_ns = multicore_fifo_pop_blocking();
-            float_xfer.ui32 = multicore_fifo_pop_blocking();
-            if (period_ns == 0) {
-                printf("Voltage PWM: No signal\n");
+    {
+        const char *arg = cmd_match(command, "rv");
+        if (!arg) arg = cmd_match(command, "read_voltage");
+        if (arg) {
+            multicore_fifo_push_blocking(cmd_read_voltage_pwm);
+            if (multicore_fifo_pop_blocking() == return_ok) {
+                uint32_t period_ns = multicore_fifo_pop_blocking();
+                float_xfer.ui32 = multicore_fifo_pop_blocking();
+                if (strcmp(arg, "period") == 0) {
+                    if (period_ns == 0) printf("NULL\n");
+                    else printf("%u\n", (unsigned)period_ns);
+                } else if (strcmp(arg, "freq") == 0) {
+                    if (period_ns == 0) printf("NULL\n");
+                    else printf("%.2f\n", (double)(1000000000.0f / (float)period_ns));
+                } else if (strcmp(arg, "value") == 0) {
+                    if (period_ns == 0) printf("NULL\n");
+                    else printf("%.1f\n", (double)float_xfer.f);
+                } else {
+                    if (period_ns == 0) {
+                        printf("Voltage PWM: No signal\n");
+                    } else {
+                        float hz = 1000000000.0f / (float)period_ns;
+                        printf("Voltage PWM: period=%uns  freq=%.2fHz  %.1fV (cal table)\n",
+                               period_ns, hz, float_xfer.f);
+                    }
+                }
             } else {
-                float hz = 1000000000.0f / (float)period_ns;
-                printf("Voltage PWM: period=%uns  freq=%.2fHz  %.1fV (cal table)\n",
-                       period_ns, hz, float_xfer.f);
+                printf("Read voltage failed!\n");
             }
-        } else {
-            printf("Read voltage failed!\n");
+            return true;
         }
-        return true;
     }
 
-    if(strcmp(command, "ri") == 0 || strcmp(command, "read_current") == 0) {
-        multicore_fifo_push_blocking(cmd_read_current_pwm);
-        if (multicore_fifo_pop_blocking() == return_ok) {
-            uint32_t period_ns = multicore_fifo_pop_blocking();
-            if (period_ns == 0) {
-                printf("Current PWM: No signal\n");
+    {
+        const char *arg = cmd_match(command, "ri");
+        if (!arg) arg = cmd_match(command, "read_current");
+        if (arg) {
+            multicore_fifo_push_blocking(cmd_read_current_pwm);
+            if (multicore_fifo_pop_blocking() == return_ok) {
+                uint32_t period_ns = multicore_fifo_pop_blocking();
+                if (strcmp(arg, "period") == 0) {
+                    if (period_ns == 0) printf("NULL\n");
+                    else printf("%u\n", (unsigned)period_ns);
+                } else if (strcmp(arg, "freq") == 0) {
+                    if (period_ns == 0) printf("NULL\n");
+                    else printf("%.2f\n", (double)(1000000000.0f / (float)period_ns));
+                } else if (strcmp(arg, "value") == 0) {
+                    printf("NULL\n");
+                } else {
+                    if (period_ns == 0) {
+                        printf("Current PWM: No signal\n");
+                    } else {
+                        float hz = 1000000000.0f / (float)period_ns;
+                        printf("Current PWM: period=%uns  freq=%.2fHz  [no cal table]\n",
+                               period_ns, hz);
+                    }
+                }
             } else {
-                float hz = 1000000000.0f / (float)period_ns;
-                printf("Current PWM: period=%uns  freq=%.2fHz  [calibration TODO]\n",
-                       period_ns, hz);
+                printf("Read current failed!\n");
             }
-        } else {
-            printf("Read current failed!\n");
+            return true;
         }
-        return true;
-    }
-
-    if(strcmp(command, "av") == 0 || strcmp(command, "actual_voltage") == 0) {
-        multicore_fifo_push_blocking(cmd_get_actual_voltage);
-        if (multicore_fifo_pop_blocking() == return_ok) {
-            float_xfer.ui32 = multicore_fifo_pop_blocking();
-            printf("Actual voltage: %.1f V\n", float_xfer.f);
-        } else {
-            printf("Read actual voltage failed!\n");
-        }
-        return true;
-    }
-
-    if(strcmp(command, "ai") == 0 || strcmp(command, "actual_current") == 0) {
-        multicore_fifo_push_blocking(cmd_get_actual_current);
-        if (multicore_fifo_pop_blocking() == return_ok) {
-            float_xfer.ui32 = multicore_fifo_pop_blocking();
-            printf("Actual current: %.2f Hz (uncalibrated)\n", float_xfer.f);
-        } else {
-            printf("Read actual current failed!\n");
-        }
-        return true;
     }
 
     // -------------------------------------------------------------------------
@@ -557,10 +564,8 @@ void serial_console() {
             printf("    lim            set soft limit (sv cap) and hard limit (control ceiling)\n");
             printf("\n");
             printf("  Monitoring:\n");
-            printf("    rv             read_voltage: PWM period, Hz, cal-table volts\n");
-            printf("    ri             read_current: PWM period, Hz\n");
-            printf("    av             actual_voltage: estimated voltage (PWM cal table)\n");
-            printf("    ai             actual_current: Hz (uncalibrated)\n");
+            printf("    rv [period|freq|value]  read_voltage: all fields, or one (NULL if no signal/cal)\n");
+            printf("    ri [period|freq|value]  read_current: all fields, or one (value always NULL)\n");
             printf("\n");
             printf("  DAC / Ramp:\n");
             printf("    dacw [code]    dac_write: raw 12-bit code (0-4095); pauses ramp if HV on\n");

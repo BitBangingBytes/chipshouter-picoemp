@@ -9,7 +9,6 @@
 // cmd word + float bits follow
 #define cmd_set_voltage 18
 #define cmd_get_actual_voltage 19
-#define cmd_get_actual_current 20
 #define cmd_get_faults 21
 #define cmd_clear_faults 22
 // cmd word + float bits follow
