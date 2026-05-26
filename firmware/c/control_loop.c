@@ -16,7 +16,7 @@
 // Periodic DAC refresh: resend current code unconditionally at this interval
 // even when the ramp is complete. Keeps the DAC consistent after noise glitches
 // on the SPI bus. 0 disables the refresh.
-#define DAC_REFRESH_INTERVAL_MS_DEFAULT 500u
+#define DAC_REFRESH_INTERVAL_MS_DEFAULT 50u
 
 // Current: rough conversion — placeholder (period_ns → amps not yet calibrated).
 // Returns Hz for now; replace with calibrated formula.
