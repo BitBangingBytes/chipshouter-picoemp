@@ -18,7 +18,3 @@ uint32_t psu_monitor_get_current_period_ns();
 
 bool psu_monitor_voltage_is_valid();
 bool psu_monitor_current_is_valid();
-
-// Monotonic counter incremented once per completed voltage-PWM average.
-// Use to gate control-loop adjustments on fresh feedback (vs. wall-clock time).
-uint32_t psu_monitor_voltage_sample_seq();

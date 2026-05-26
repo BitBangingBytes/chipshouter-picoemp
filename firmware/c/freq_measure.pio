@@ -16,9 +16,15 @@
 ;
 .program freq_measure
 
+    wait 0 pin 0        ; one-time startup sync: park until pin is LOW so the
+                        ; first wrap-target wait 1 catches a true rising edge.
+
 .wrap_target
-    wait 0 pin 0        ; sync: ensure pin is LOW
-    wait 1 pin 0        ; rising edge #1 — start of period
+    wait 1 pin 0        ; rising edge — start of period. On every iteration
+                        ; after the first, the pin is still HIGH from the
+                        ; just-detected rising edge so this returns immediately,
+                        ; starting the next count at that same edge → we measure
+                        ; every period instead of every other.
     mov x, ~null        ; x = 0xFFFFFFFF (counts down)
 
 high:
