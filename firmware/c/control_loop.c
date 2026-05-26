@@ -202,7 +202,10 @@ void control_loop_enable(bool en) {
         while (!dac_write_done()) tight_loop_contents();
         current_dac         = INITIAL_DAC_CODE;
         ramp_start_dac      = INITIAL_DAC_CODE;
-        ramp_start_distance = 0;
+        uint16_t tdac       = cal_volts_to_dac(target_volts);
+        ramp_start_distance = (tdac > INITIAL_DAC_CODE)
+                              ? (uint32_t)(tdac - INITIAL_DAC_CODE)
+                              : (uint32_t)(INITIAL_DAC_CODE - tdac);
         last_ramp_tick_us   = time_us_64();
         dac_write(INITIAL_DAC_CODE);
     } else {
